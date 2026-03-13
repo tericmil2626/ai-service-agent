@@ -172,6 +172,7 @@ async function startServer() {
 
   // Main SMS webhook
   app.post('/webhook/sms', async (request, reply) => {
+    try {
     const { From: rawFrom, Body, To } = request.body;
     const From = rawFrom.trim();
     
@@ -350,6 +351,11 @@ async function startServer() {
     
     reply.type('text/xml');
     return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`;
+    } catch (error) {
+      console.error('[SMS] ERROR:', error);
+      reply.type('text/xml');
+      return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Sorry, there was an error. Please try again.</Message></Response>`;
+    }
   });
 
   // Send SMS endpoint
