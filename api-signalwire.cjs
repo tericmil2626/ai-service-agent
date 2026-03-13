@@ -146,7 +146,7 @@ async function startServer() {
       response = `🚨 That sounds urgent! I'm flagging this as an emergency. Can I get your name and address so I can dispatch a technician immediately?`;
       conv.data.urgent = true;
       conv.step = 'urgent_info';
-    } else if (lowerBody.includes('leak') || lowerBody.includes('broken') || lowerBody.includes('not working') || lowerBody.includes('problem') || lowerBody.includes('issue') || lowerBody.includes('ac') || lowerBody.includes('cooling') || lowerBody.includes('heating') || lowerBody.includes('hvac') || lowerBody.includes('air conditioner') || lowerBody.includes('furnace')) {
+    } else if (lowerBody.includes('leak') || lowerBody.includes('broken') || lowerBody.includes('not working') || lowerBody.includes('not cooling') || lowerBody.includes('not heating') || lowerBody.includes('problem') || lowerBody.includes('issue') || lowerBody.includes('ac') || lowerBody.includes('cooling') || lowerBody.includes('heating') || lowerBody.includes('hvac') || lowerBody.includes('air conditioner') || lowerBody.includes('furnace')) {
       if (conv.step === 'greeting') {
         response = `I can help with that! Can I start with your name?`;
         conv.step = 'ask_name';
