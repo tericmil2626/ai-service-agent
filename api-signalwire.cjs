@@ -13,17 +13,16 @@ const app = Fastify({
 });
 
 // SignalWire credentials
-const SIGNALWIRE_PROJECT_ID = process.env.SIGNALWIRE_PROJECT_ID || '9ea331fc-49ce-4c42-90ee-6ee34db9251f';
-const SIGNALWIRE_TOKEN = process.env.SIGNALWIRE_TOKEN || 'PT7a4e648a1d3a887cd49615fe3c957ad4752efc3d487e8630';
-const SIGNALWIRE_NUMBER = process.env.SIGNALWIRE_PHONE_NUMBER || '+14053694926';
-const SIGNALWIRE_SPACE = 'theodorosai26.signalwire.com';
+const SIGNALWIRE_PROJECT_ID = process.env.SIGNALWIRE_PROJECT_ID;
+const SIGNALWIRE_TOKEN = process.env.SIGNALWIRE_TOKEN;
+const SIGNALWIRE_NUMBER = process.env.SIGNALWIRE_PHONE_NUMBER;
+const SIGNALWIRE_SPACE = process.env.SIGNALWIRE_SPACE || 'theodorosai26.signalwire.com';
 
 // Database setup
 const DB_PATH = path.join(__dirname, 'data', 'conversations.db');
 let db;
 
 async function initDb() {
-  // Create data directory if it doesn't exist
   const fs = require('fs');
   const dataDir = path.dirname(DB_PATH);
   if (!fs.existsSync(dataDir)) {
@@ -35,7 +34,6 @@ async function initDb() {
     driver: sqlite3.Database
   });
   
-  // Create conversations table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
       phone TEXT PRIMARY KEY,
@@ -46,7 +44,6 @@ async function initDb() {
     )
   `);
   
-  // Create messages table for history
   await db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,8 +84,30 @@ async function saveMessage(phone, direction, message) {
   );
 }
 
+// Check if message indicates a service issue
+function isServiceRequest(body) {
+  const keywords = ['leak', 'broken', 'not working', 'not cooling', 'not heating', 'problem', 'issue', 
+                    'ac', 'cooling', 'heating', 'hvac', 'air conditioner', 'furnace', 'sink', 'toilet', 
+                    'pipe', 'water', 'drain', 'clogged', 'flood', 'burst'];
+  return keywords.some(kw => body.toLowerCase().includes(kw));
+}
+
+// Check if message indicates urgency
+function isUrgentRequest(body) {
+  const urgentKeywords = ['flood', 'pouring', 'emergency', 'asap', 'urgent', 'now', 'immediately', 
+                          'burst', 'fire', 'sparking', 'water everywhere', 'pipe burst'];
+  return urgentKeywords.some(kw => body.toLowerCase().includes(kw));
+}
+
+// Check if user said "not urgent"
+function isNotUrgent(body) {
+  const lower = body.toLowerCase();
+  return lower.includes('not urgent') || lower.includes('not an emergency') || 
+         lower.includes('can wait') || lower.includes('not asap') ||
+         (lower.includes('not') && lower.includes('urgent'));
+}
+
 async function startServer() {
-  // Initialize database
   await initDb();
   
   await app.register(cors, {
@@ -96,7 +115,6 @@ async function startServer() {
     credentials: true
   });
 
-  // Parse form data
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (req, body, done) => {
     try {
       const parsed = new URLSearchParams(body);
@@ -105,174 +123,197 @@ async function startServer() {
         result[key] = value;
       }
       done(null, result);
-    } catch (err) {
-      done(err);
+    } catch (e) {
+      done(e);
     }
   });
 
-  // SignalWire SMS webhook
+  // Health check
+  app.get('/health', async () => {
+    return { status: 'ok', timestamp: new Date().toISOString() };
+  });
+
+  // Main SMS webhook
   app.post('/webhook/sms', async (request, reply) => {
     const { From: rawFrom, Body, To } = request.body;
     const From = rawFrom.trim();
-    console.log(`[SMS] From: ${From}, Body: ${Body}`);
     
-    // Save incoming message
+    console.log(`[SMS] From: ${From}, Body: "${Body}", Step: ${(await getConversation(From)).step}`);
+    
     await saveMessage(From, 'inbound', Body);
     
-    // Get conversation state from database
     const conv = await getConversation(From);
     const lowerBody = Body.toLowerCase();
     let response = '';
-    
-    // Check for RESET command
+    let newStep = conv.step;
+    let newData = { ...conv.data };
+
+    // RESET command
     if (lowerBody === 'reset' || lowerBody === 'start over') {
-      await saveConversation(From, 'greeting', {}, null);
       response = `Conversation reset. How can I help you today?`;
-      await saveMessage(From, 'outbound', response);
-      reply.type('text/xml');
-      return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`;
+      newStep = 'greeting';
+      newData = {};
     }
-    
-    // Check for URGENCY first - ALWAYS check, even mid-conversation
-    const urgentKeywords = ['flood', 'pouring', 'emergency', 'asap', 'urgent', 'now', 'immediately', 'burst', 'fire', 'sparking', 'water everywhere', 'pipe burst'];
-    const isUrgent = urgentKeywords.some(kw => lowerBody.includes(kw));
-    
-    // Debug logging
-    console.log(`[DEBUG] Step: ${conv.step}, Body: "${lowerBody}", isUrgent: ${isUrgent}`);
-    
-    // Intent detection with conversation memory
-    if (isUrgent) {
-      // Urgent issue detected - override any current conversation
-      response = `🚨 That sounds urgent! I'm flagging this as an emergency. Can I get your name and address so I can dispatch a technician immediately?`;
-      conv.data.urgent = true;
-      conv.step = 'urgent_info';
-    } else if (lowerBody.includes('leak') || lowerBody.includes('broken') || lowerBody.includes('not working') || lowerBody.includes('not cooling') || lowerBody.includes('not heating') || lowerBody.includes('problem') || lowerBody.includes('issue') || lowerBody.includes('ac') || lowerBody.includes('cooling') || lowerBody.includes('heating') || lowerBody.includes('hvac') || lowerBody.includes('air conditioner') || lowerBody.includes('furnace')) {
-      if (conv.step === 'greeting') {
+    // GREETING - First contact
+    else if (conv.step === 'greeting') {
+      if (isUrgentRequest(Body)) {
+        response = `🚨 That sounds urgent! I'm flagging this as an emergency. Can I get your name and address so I can dispatch a technician immediately?`;
+        newStep = 'urgent_info';
+        newData.urgent = true;
+      } else if (isServiceRequest(Body)) {
         response = `I can help with that! Can I start with your name?`;
-        conv.step = 'ask_name';
+        newStep = 'ask_name';
+        newData.serviceType = 'General Service';
       } else {
-        // Already in conversation, continue
-        response = continueConversation(conv, Body);
+        response = `Hi! I'm your AI receptionist. I can help schedule service, answer questions, or connect you with a technician. What do you need help with?`;
       }
-    } else if ((conv.step === 'ask_name' || conv.step === 'urgent_info') && Body.length > 2) {
-      console.log(`Processing name/address. Step: ${conv.step}, Urgent: ${conv.data.urgent}`);
-      // Try to parse name and address if both provided
-      const lines = Body.split(/\n|,|\s+at\s+|\s+address\s+/i).filter(s => s.trim());
-      console.log(`Parsed lines:`, lines);
-      
-      if (lines.length >= 2 && lines[1].match(/\d+/)) {
-        // Looks like name and address were both provided
-        console.log('Detected combined name + address');
-        conv.data.name = lines[0].trim();
-        conv.data.address = lines.slice(1).join(', ').trim();
-        
-        if (conv.data.urgent) {
-          response = `Thanks ${conv.data.name}! Got your address. A technician is being dispatched now. They'll call you within 10 minutes. Emergency fee applies.`;
-          conv.step = 'dispatched';
-          // Send email notification for urgent job
-          console.log('Dispatching urgent job - sending email...');
-          sendJobNotification({
-            customerName: conv.data.name,
-            customerPhone: From,
-            address: conv.data.address,
-            serviceType: 'Emergency Repair',
-            urgency: true,
-            notes: 'Customer reported urgent issue via SMS'
-          }).catch(err => console.error('Failed to send email:', err));
-        } else {
-          response = `Thanks ${conv.data.name}! Got your address at ${conv.data.address}. Is this urgent or can it wait for a scheduled appointment?`;
-          conv.step = 'ask_urgency';
-        }
-      } else {
-        // Only name provided
-        conv.data.name = Body;
-        if (conv.data.urgent) {
-          response = `Thanks ${Body}! What's the address? I'll get someone out ASAP.`;
-          conv.step = 'urgent_address';
-        } else {
-          response = `Thanks ${Body}! What's the address where you need service?`;
-          conv.step = 'ask_address';
-        }
-      }
-    } else if ((conv.step === 'ask_address' || conv.step === 'urgent_address') && Body.length > 5) {
-      conv.data.address = Body;
-      if (conv.data.urgent) {
-        response = `Got it. A technician is being dispatched now. They'll call you within 10 minutes. Emergency fee applies.`;
-        conv.step = 'dispatched';
-        // Send email notification for urgent job
+    }
+    // ASK_NAME - Get customer's name
+    else if (conv.step === 'ask_name') {
+      newData.name = Body;
+      response = `Thanks ${Body}! What's the address where you need service?`;
+      newStep = 'ask_address';
+    }
+    // URGENT_INFO - Get name for urgent request
+    else if (conv.step === 'urgent_info') {
+      newData.name = Body;
+      response = `Thanks ${Body}! What's the address? I'll get someone out ASAP.`;
+      newStep = 'urgent_address';
+    }
+    // ASK_ADDRESS - Get address for normal request
+    else if (conv.step === 'ask_address') {
+      newData.address = Body;
+      response = `Got it. Is this urgent or can it wait for a scheduled appointment?`;
+      newStep = 'ask_urgency';
+    }
+    // URGENT_ADDRESS - Get address for urgent request
+    else if (conv.step === 'urgent_address') {
+      newData.address = Body;
+      response = `Got it. A technician is being dispatched now. They'll call you within 10 minutes. Emergency fee applies.`;
+      newStep = 'dispatched';
+      // Send email for urgent job
+      sendJobNotification({
+        customerName: newData.name,
+        customerPhone: From,
+        address: Body,
+        serviceType: 'Emergency Repair',
+        urgency: true,
+        notes: 'Customer reported urgent issue via SMS'
+      }).catch(err => console.error('Failed to send email:', err));
+    }
+    // ASK_URGENCY - Determine if urgent or can schedule
+    else if (conv.step === 'ask_urgency') {
+      if (isNotUrgent(Body)) {
+        response = `Great. We have openings tomorrow at 10am or 2pm. Which works better?`;
+        newStep = 'scheduling';
+      } else if (isUrgentRequest(Body) || lowerBody.includes('soon') || lowerBody.includes('quick')) {
+        response = `I'll prioritize this as urgent. A technician will call you within 15 minutes.`;
+        newStep = 'urgent_scheduled';
+        newData.urgent = true;
         sendJobNotification({
-          customerName: conv.data.name,
+          customerName: newData.name,
           customerPhone: From,
-          address: Body,
-          serviceType: 'Emergency Repair',
+          address: newData.address,
+          serviceType: 'Urgent Repair',
           urgency: true,
-          notes: 'Customer reported urgent issue via SMS'
+          notes: 'Customer indicated urgency via SMS'
         }).catch(err => console.error('Failed to send email:', err));
       } else {
-        response = `Got it. Is this urgent or can it wait for a scheduled appointment?`;
-        conv.step = 'ask_urgency';
-      }
-    } else if (conv.step === 'ask_urgency') {
-      // Check for negation first - if user says "not" before urgent words, treat as non-urgent
-      const hasNot = lowerBody.includes('not');
-      const hasUrgentWords = lowerBody.includes('urgent') || lowerBody.includes('asap') || lowerBody.includes('soon') || lowerBody.includes('quick');
-      
-      // If they said "not" and also used urgent words, they mean "not urgent"
-      // Also check explicit non-urgent phrases
-      const isNotUrgent = hasNot || lowerBody.includes('can wait') || lowerBody.includes('not an emergency');
-      
-      if (!isNotUrgent && (isUrgent || hasUrgentWords)) {
-        response = `I'll prioritize this as urgent. A technician will call you within 15 minutes.`;
-        conv.step = 'urgent_scheduled';
-      } else {
         response = `Great. We have openings tomorrow at 10am or 2pm. Which works better?`;
-        conv.step = 'scheduling';
+        newStep = 'scheduling';
       }
-    } else if (lowerBody.includes('hour') || lowerBody.includes('open') || lowerBody.includes('when are you')) {
-      response = `We're open Monday-Friday 8am-5pm. We also offer 24/7 emergency service for urgent issues.`;
-    } else if (lowerBody.includes('price') || lowerBody.includes('cost') || lowerBody.includes('how much') || lowerBody.includes('estimate')) {
-      response = `Pricing varies by job. We offer free estimates after inspection. Emergency service has an additional fee. Standard repairs typically range $150-500.`;
-    } else if (lowerBody.includes('service') || lowerBody.includes('what do you do')) {
-      response = `We offer plumbing, electrical, HVAC, and appliance repair. We also do installations and maintenance. What type of service do you need?`;
-    } else if (lowerBody.includes('cancel') || lowerBody.includes('never mind') || lowerBody.includes('forget it')) {
-      response = `No problem! If you need help in the future, just text us. Have a great day!`;
-      conv.step = 'greeting';
-      conv.data = {};
-    } else if (lowerBody.includes('thank') || lowerBody === 'ok' || lowerBody === 'great' || lowerBody === 'sounds good') {
-      if (conv.step === 'dispatched' || conv.step === 'urgent_scheduled' || conv.step === 'scheduling') {
-        response = `You're welcome! Is there anything else I can help you with today?`;
-        conv.step = 'completed';
-      } else {
-        response = continueConversation(conv, Body);
-      }
-    } else if (conv.step !== 'greeting') {
-      // Continue existing conversation
-      response = continueConversation(conv, Body);
-    } else {
-      response = `Hi! I'm your AI receptionist. I can help schedule service, answer questions, or connect you with a technician. What do you need help with?`;
     }
-    
-    // Save conversation state
-    await saveConversation(From, conv.step, conv.data, Body);
+    // SCHEDULING - Pick a time
+    else if (conv.step === 'scheduling') {
+      let appointmentTime = '';
+      let appointmentDate = '';
+      
+      if (lowerBody.includes('10') || lowerBody.includes('morning')) {
+        appointmentTime = '10:00';
+        response = `Perfect! You're scheduled for tomorrow at 10am. A technician will arrive between 10-11am. You'll get a confirmation call 30 minutes before arrival.`;
+      } else if (lowerBody.includes('2') || lowerBody.includes('afternoon')) {
+        appointmentTime = '14:00';
+        response = `Perfect! You're scheduled for tomorrow at 2pm. A technician will arrive between 2-3pm. You'll get a confirmation call 30 minutes before arrival.`;
+      } else {
+        response = `I can do 10am or 2pm tomorrow. Which works better for you?`;
+      }
+      
+      if (appointmentTime) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        appointmentDate = tomorrow.toISOString().split('T')[0];
+        
+        try {
+          // Create customer
+          let customer = await db.get('SELECT id FROM customers WHERE phone = ?', From);
+          let customerId;
+          
+          if (!customer) {
+            const result = await db.run(
+              'INSERT INTO customers (phone, name, address) VALUES (?, ?, ?)',
+              [From, newData.name || 'Unknown', newData.address || 'TBD']
+            );
+            customerId = result.lastID;
+          } else {
+            customerId = customer.id;
+          }
+          
+          // Create job
+          const jobResult = await db.run(
+            'INSERT INTO jobs (customer_id, service_type, description, status, urgency) VALUES (?, ?, ?, ?, ?)',
+            [customerId, newData.serviceType || 'General', 'Service requested via SMS', 'scheduled', newData.urgent ? 'high' : 'medium']
+          );
+          
+          // Create appointment
+          await db.run(
+            'INSERT INTO appointments (job_id, scheduled_date, scheduled_time, status) VALUES (?, ?, ?, ?)',
+            [jobResult.lastID, appointmentDate, appointmentTime, 'scheduled']
+          );
+          
+          // Send email
+          await sendJobNotification({
+            customerName: newData.name || 'Customer',
+            customerPhone: From,
+            address: newData.address || 'TBD',
+            serviceType: newData.serviceType || 'General Service',
+            urgency: newData.urgent || false,
+            notes: `Scheduled for ${appointmentDate} at ${appointmentTime}. Customer confirmed via SMS.`
+          }).catch(err => console.error('[Scheduling] Email error:', err.message));
+          
+          console.log(`[Scheduling] Appointment created for ${newData.name} on ${appointmentDate} at ${appointmentTime}`);
+          
+        } catch (error) {
+          console.error('[Scheduling] Failed to create appointment:', error);
+          response += `\n\n(Note: There was an issue saving to our calendar, but your appointment is confirmed. We'll follow up shortly.)`;
+        }
+        
+        newStep = 'completed';
+      }
+    }
+    // COMPLETED - Conversation done
+    else if (conv.step === 'completed' || conv.step === 'dispatched' || conv.step === 'urgent_scheduled') {
+      if (lowerBody.includes('thank') || lowerBody === 'ok' || lowerBody === 'great') {
+        response = `You're welcome! Is there anything else I can help you with today?`;
+      } else {
+        response = `Hi! I'm your AI receptionist. I can help schedule service, answer questions, or connect you with a technician. What do you need help with?`;
+        newStep = 'greeting';
+        newData = {};
+      }
+    }
+    // Fallback
+    else {
+      response = `I'm not sure I understood. Can you tell me more about what you need?`;
+    }
+
+    // Save state
+    await saveConversation(From, newStep, newData, Body);
     await saveMessage(From, 'outbound', response);
+    
+    console.log(`[SMS] Response: "${response.substring(0, 50)}...", New Step: ${newStep}`);
     
     reply.type('text/xml');
     return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`;
   });
-
-  function continueConversation(conv, body) {
-    // Handle various steps
-    if (conv.step === 'scheduling') {
-      if (body.toLowerCase().includes('10') || body.toLowerCase().includes('morning')) {
-        return `Perfect! You're scheduled for tomorrow at 10am. A technician will arrive between 10-11am. You'll get a confirmation call 30 minutes before arrival.`;
-      } else if (body.toLowerCase().includes('2') || body.toLowerCase().includes('afternoon')) {
-        return `Perfect! You're scheduled for tomorrow at 2pm. A technician will arrive between 2-3pm. You'll get a confirmation call 30 minutes before arrival.`;
-      } else {
-        return `I can do 10am or 2pm tomorrow. Which works better for you?`;
-      }
-    }
-    return `I'm not sure I understood. Can you tell me more about what you need?`;
-  }
 
   // Send SMS endpoint
   app.post('/api/send-sms', async (request, reply) => {
@@ -292,25 +333,24 @@ async function startServer() {
         })
       });
       
-      const data = await response.json();
-      console.log('SignalWire response:', data);
+      if (!response.ok) {
+        const error = await response.text();
+        console.error('Failed to send SMS:', error);
+        return reply.status(500).send({ error: 'Failed to send SMS' });
+      }
       
-      return { success: true, messageId: data.sid };
+      const data = await response.json();
+      return { success: true, messageSid: data.sid };
     } catch (error) {
-      console.error('Send SMS error:', error);
-      return { success: false, error: error.message };
+      console.error('Error sending SMS:', error);
+      return reply.status(500).send({ error: error.message });
     }
   });
 
-  // Health check
-  app.get('/health', async () => {
-    return { status: 'ok', timestamp: new Date().toISOString() };
-  });
-
-  // Stats
+  // Get stats for dashboard
   app.get('/api/stats', async () => {
     const convCount = await db.get('SELECT COUNT(*) as count FROM conversations');
-    const msgCount = await db.get('SELECT COUNT(*) as count FROM messages WHERE direction = "inbound"');
+    const msgCount = await db.get('SELECT COUNT(*) as count FROM messages WHERE direction = "inbound" AND created_at > datetime("now", "-1 day")');
     
     return {
       active_conversations: convCount?.count || 0,
@@ -350,7 +390,7 @@ async function startServer() {
   });
 
   try {
-    await app.listen({ port: 3002, host: '0.0.0.0' });
+    await app.listen({ port: process.env.PORT || 3002, host: '0.0.0.0' });
     console.log('🚀 Service Business API running on http://localhost:3002');
     console.log(`📱 SignalWire number: ${SIGNALWIRE_NUMBER}`);
   } catch (err) {
