@@ -1,0 +1,23 @@
+{
+  "name": "service-business",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node api-signalwire.cjs"
+  },
+  "dependencies": {
+    "@fastify/cors": "^8.5.0",
+    "@fastify/formbody": "^7.4.0",
+    "@signalwire/node": "^3.0.4",
+    "dotenv": "^17.3.1",
+    "fastify": "^4.29.1",
+    "nodemailer": "^8.0.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "twilio": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "ts-node": "^10.9.0",
+    "typescript": "^5"
+  }
+}
