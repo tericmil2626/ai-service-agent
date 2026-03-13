@@ -213,10 +213,15 @@ async function startServer() {
         conv.step = 'ask_urgency';
       }
     } else if (conv.step === 'ask_urgency') {
-      // Check for "not urgent" or "not an emergency" first
-      const isNotUrgent = lowerBody.includes('not urgent') || lowerBody.includes('not an emergency') || lowerBody.includes('can wait') || lowerBody.includes('not asap');
+      // Check for negation first - if user says "not" before urgent words, treat as non-urgent
+      const hasNot = lowerBody.includes('not');
+      const hasUrgentWords = lowerBody.includes('urgent') || lowerBody.includes('asap') || lowerBody.includes('soon') || lowerBody.includes('quick');
       
-      if (!isNotUrgent && (isUrgent || lowerBody.includes('urgent') || lowerBody.includes('asap') || lowerBody.includes('soon') || lowerBody.includes('quick'))) {
+      // If they said "not" and also used urgent words, they mean "not urgent"
+      // Also check explicit non-urgent phrases
+      const isNotUrgent = hasNot || lowerBody.includes('can wait') || lowerBody.includes('not an emergency');
+      
+      if (!isNotUrgent && (isUrgent || hasUrgentWords)) {
         response = `I'll prioritize this as urgent. A technician will call you within 15 minutes.`;
         conv.step = 'urgent_scheduled';
       } else {
