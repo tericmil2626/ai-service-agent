@@ -1,26 +1,36 @@
-console.log('STARTING SERVER...');
-
-const express = require('express');
-const app = express();
+const http = require('http');
 const PORT = process.env.PORT || 3002;
 
-console.log('PORT:', PORT);
+console.log('STARTING SERVER on port', PORT);
 
-app.use(express.urlencoded({ extended: true }));
-
-app.get('/health', (req, res) => {
-  console.log('HEALTH CHECK');
-  res.json({ status: 'ok' });
-});
-
-app.post('/webhook/sms', (req, res) => {
-  console.log('SMS RECEIVED:', req.body);
-  const { From, Body } = req.body;
+const server = http.createServer((req, res) => {
+  console.log('Request received:', req.url, req.method);
   
-  res.type('text/xml');
-  res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Received: ${Body}</Message></Response>`);
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+  } else if (req.url === '/webhook/sms' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      console.log('SMS body:', body);
+      res.writeHead(200, { 'Content-Type': 'text/xml' });
+      res.end('<?xml version="1.0" encoding="UTF-8"?><Response><Message>Test response</Message></Response>');
+    });
+  } else {
+    res.writeHead(404);
+    res.end('Not found');
+  }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log('Server running on port', PORT);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err);
 });
