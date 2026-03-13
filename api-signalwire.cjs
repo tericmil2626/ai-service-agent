@@ -53,6 +53,43 @@ async function initDb() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Create customers table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      phone TEXT,
+      email TEXT,
+      address TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Create jobs table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER,
+      service_type TEXT,
+      description TEXT,
+      urgency TEXT,
+      status TEXT DEFAULT 'new',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Create appointments table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS appointments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id INTEGER,
+      scheduled_date TEXT,
+      scheduled_time TEXT,
+      status TEXT DEFAULT 'scheduled',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
   
   console.log('SQLite database initialized');
 }
