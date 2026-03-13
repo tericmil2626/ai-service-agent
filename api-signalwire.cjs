@@ -23,6 +23,13 @@ const DB_PATH = path.join(__dirname, 'data', 'conversations.db');
 let db;
 
 async function initDb() {
+  // Create data directory if it doesn't exist
+  const fs = require('fs');
+  const dataDir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  
   db = await open({
     filename: DB_PATH,
     driver: sqlite3.Database
