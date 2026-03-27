@@ -1,11 +1,37 @@
 {
   "name": "service-business",
-  "version": "1.0.0",
+  "version": "3.0.0",
+  "description": "AI-powered multi-agent system for home service businesses - Tiered pricing ready",
   "scripts": {
-    "start": "node api-signalwire.cjs"
+    "build": "tsc",
+    "dev": "SERVICE_TIER=starter tsx watch api-v2.ts",
+    "dev:pro": "SERVICE_TIER=professional tsx watch api-v2.ts",
+    "start": "node dist/api-v2.js",
+    "db:init": "node dist/database.js init",
+    "test": "tsx test-orchestrator.ts",
+    "cron": "tsx cron-jobs.ts",
+    "cron:scheduler": "tsx cron-scheduler.ts",
+    "cron:pro": "SERVICE_TIER=professional tsx cron-jobs.ts",
+    "db:migrate": "tsx migrate-cron.ts"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "dotenv": "^17.3.1"
+    "@fastify/cors": "^9.0.1",
+    "@fastify/formbody": "^7.4.0",
+    "@fastify/static": "^9.0.0",
+    "@signalwire/compatibility-api": "^3.2.0",
+    "@signalwire/node": "^3.0.4",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1",
+    "googleapis": "^171.4.0",
+    "node-cron": "^3.0.3",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.17.0",
+    "typescript": "^5.5.4"
   }
 }

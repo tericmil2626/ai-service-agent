@@ -1,0 +1,1 @@
+{"version":3,"file":"ServiceAgent.js","sourceRoot":"","sources":["../../types/ServiceAgent.ts"],"names":[],"mappings":";AAAA,uCAAuC;AACvC,kFAAkF;;;AAqClF,2CAA2C;AAC3C,MAAsB,gBAAgB;IAIpC,KAAK,CAAC,UAAU,CAAE,IAAS;QACzB,iCAAiC;IACnC,CAAC;IAID,QAAQ;QACN,OAAO,EAAE,CAAC;IACZ,CAAC;IAED,QAAQ,CAAE,KAA0B;QAClC,iCAAiC;IACnC,CAAC;CACF;AAjBD,4CAiBC"}

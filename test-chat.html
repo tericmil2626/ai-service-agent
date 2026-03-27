@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Bot Test - Service Business</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1115;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            background: #1a1d24;
+            border-bottom: 1px solid #2e3440;
+            padding: 1rem 2rem;
+        }
+        
+        .header h1 {
+            font-size: 1.25rem;
+            color: #f59e0b;
+        }
+        
+        .header p {
+            color: #9ca3af;
+            font-size: 0.875rem;
+            margin-top: 0.25rem;
+        }
+        
+        .container {
+            flex: 1;
+            display: flex;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+            padding: 2rem;
+            gap: 2rem;
+        }
+        
+        .chat-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .chat-window {
+            flex: 1;
+            background: #1a1d24;
+            border: 1px solid #2e3440;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 500px;
+        }
+        
+        .chat-header {
+            background: #252a33;
+            padding: 1rem;
+            border-bottom: 1px solid #2e3440;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        
+        .chat-header .avatar {
+            width: 40px;
+            height: 40px;
+            background: #f59e0b;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+        
+        .chat-header .info h3 {
+            font-size: 0.9375rem;
+            color: #fff;
+        }
+        
+        .chat-header .info p {
+            font-size: 0.75rem;
+            color: #10b981;
+        }
+        
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .message {
+            max-width: 80%;
+            padding: 0.75rem 1rem;
+            border-radius: 1rem;
+            font-size: 0.9375rem;
+            line-height: 1.5;
+            animation: fadeIn 0.2s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message.user {
+            align-self: flex-end;
+            background: #f59e0b;
+            color: #000;
+            border-bottom-right-radius: 0.25rem;
+        }
+        
+        .message.bot {
+            align-self: flex-start;
+            background: #252a33;
+            color: #fff;
+            border: 1px solid #2e3440;
+            border-bottom-left-radius: 0.25rem;
+        }
+        
+        .message .time {
+            font-size: 0.6875rem;
+            opacity: 0.6;
+            margin-top: 0.25rem;
+        }
+        
+        .typing {
+            align-self: flex-start;
+            background: #252a33;
+            padding: 1rem;
+            border-radius: 1rem;
+            border-bottom-left-radius: 0.25rem;
+            display: flex;
+            gap: 0.25rem;
+        }
+        
+        .typing span {
+            width: 8px;
+            height: 8px;
+            background: #9ca3af;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        
+        .typing span:nth-child(1) { animation-delay: -0.32s; }
+        .typing span:nth-child(2) { animation-delay: -0.16s; }
+        
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+        
+        .chat-input {
+            padding: 1rem;
+            border-top: 1px solid #2e3440;
+            display: flex;
+            gap: 0.75rem;
+        }
+        
+        .chat-input input {
+            flex: 1;
+            background: #252a33;
+            border: 1px solid #2e3440;
+            border-radius: 0.5rem;
+            padding: 0.75rem 1rem;
+            color: #fff;
+            font-size: 0.9375rem;
+        }
+        
+        .chat-input input:focus {
+            outline: none;
+            border-color: #f59e0b;
+        }
+        
+        .chat-input input::placeholder {
+            color: #6b7280;
+        }
+        
+        .chat-input button {
+            background: #f59e0b;
+            color: #000;
+            border: none;
+            border-radius: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .chat-input button:hover {
+            background: #fbbf24;
+        }
+        
+        .chat-input button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .settings-section {
+            width: 300px;
+        }
+        
+        .settings-card {
+            background: #1a1d24;
+            border: 1px solid #2e3440;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+        }
+        
+        .settings-card h2 {
+            font-size: 1rem;
+            margin-bottom: 1rem;
+            color: #f59e0b;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            color: #9ca3af;
+            margin-bottom: 0.5rem;
+        }
+        
+        .form-group input {
+            width: 100%;
+            background: #252a33;
+            border: 1px solid #2e3440;
+            border-radius: 0.5rem;
+            padding: 0.625rem 0.875rem;
+            color: #fff;
+            font-size: 0.875rem;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #f59e0b;
+        }
+        
+        .btn-secondary {
+            width: 100%;
+            background: #252a33;
+            color: #fff;
+            border: 1px solid #2e3440;
+            border-radius: 0.5rem;
+            padding: 0.625rem;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-secondary:hover {
+            background: #2e3440;
+        }
+        
+        .status {
+            margin-top: 1rem;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+        }
+        
+        .status.success {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #10b981;
+        }
+        
+        .status.error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #ef4444;
+        }
+        
+        .info-box {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #252a33;
+            border-radius: 0.5rem;
+            font-size: 0.8125rem;
+            color: #9ca3af;
+            line-height: 1.6;
+        }
+        
+        .info-box code {
+            background: #1a1d24;
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            color: #f59e0b;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 Service Business Chat Bot Test</h1>
+        <p>Test the AI receptionist and scheduling system</p>
+    </div>
+    
+    <div class="container">
+        <div class="chat-section">
+            <div class="chat-window">
+                <div class="chat-header">
+                    <div class="avatar">🦞</div>
+                    <div class="info">
+                        <h3>Theo (AI Receptionist)</h3>
+                        <p>● Online</p>
+                    </div>
+                </div>
+                <div class="messages" id="messages">
+                    <div class="message bot">
+                        Hello! I'm Theo, your AI receptionist. I can help you schedule service appointments. What can I help you with today?
+                        <div class="time">Now</div>
+                    </div>
+                </div>
+                <div class="chat-input">
+                    <input type="text" id="messageInput" placeholder="Type your message..." autocomplete="off">
+                    <button id="sendBtn" onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="settings-section">
+            <div class="settings-card">
+                <h2>Test Settings</h2>
+                
+                <div class="form-group">
+                    <label>Phone Number</label>
+                    <input type="text" id="phoneInput" value="+15551112222" placeholder="+15551112222">
+                </div>
+                
+                <div class="form-group">
+                    <label>Customer Name (optional)</label>
+                    <input type="text" id="nameInput" placeholder="John Smith">
+                </div>
+                
+                <button class="btn-secondary" onclick="clearChat()">Clear Chat</button>
+                <button class="btn-secondary" onclick="newSession()" style="margin-top: 0.5rem;">New Session</button>
+                
+                <div class="info-box">
+                    <strong>How to test:</strong><br><br>
+                    1. Try: <code>"Hi, my AC is broken"</code><br>
+                    2. Provide your name when asked<br>
+                    3. Give an address<br>
+                    4. Describe the problem<br>
+                    5. Select a time slot<br><br>
+                    The bot will guide you through the full intake and scheduling flow.
+                </div>
+                
+                <div id="status"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:3002/webhook/chat';
+        let sessionId = generateSessionId();
+        
+        // Set initial unique phone number on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            const uniqueId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 100);
+            document.getElementById('phoneInput').value = '+1555' + uniqueId;
+        });
+        
+        function generateSessionId() {
+            return 'test-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+        }
+        
+        function getTime() {
+            return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        
+        function addMessage(text, isUser = false) {
+            const messages = document.getElementById('messages');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+            msgDiv.innerHTML = `${text}<div class="time">${getTime()}</div>`;
+            messages.appendChild(msgDiv);
+            messages.scrollTop = messages.scrollHeight;
+        }
+        
+        function showTyping() {
+            const messages = document.getElementById('messages');
+            const typing = document.createElement('div');
+            typing.className = 'typing';
+            typing.id = 'typing';
+            typing.innerHTML = '<span></span><span></span><span></span>';
+            messages.appendChild(typing);
+            messages.scrollTop = messages.scrollHeight;
+        }
+        
+        function hideTyping() {
+            const typing = document.getElementById('typing');
+            if (typing) typing.remove();
+        }
+        
+        function showStatus(message, isError = false) {
+            const status = document.getElementById('status');
+            status.className = `status ${isError ? 'error' : 'success'}`;
+            status.textContent = message;
+            setTimeout(() => status.textContent = '', 5000);
+        }
+        
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const sendBtn = document.getElementById('sendBtn');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            const phone = document.getElementById('phoneInput').value.trim() || '+15551112222';
+            const name = document.getElementById('nameInput').value.trim();
+            
+            addMessage(message, true);
+            input.value = '';
+            sendBtn.disabled = true;
+            showTyping();
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        sessionId: sessionId,
+                        customerInfo: {
+                            phone: phone,
+                            name: name || undefined
+                        }
+                    })
+                });
+                
+                const data = await response.json();
+                hideTyping();
+                
+                if (data.success) {
+                    addMessage(data.response);
+                } else {
+                    addMessage('Sorry, I encountered an error. Please try again.');
+                    showStatus('Error: ' + (data.error || 'Unknown error'), true);
+                }
+            } catch (error) {
+                hideTyping();
+                addMessage('Sorry, I cannot connect to the server. Please make sure the API is running on port 3002.');
+                showStatus('Connection failed. Is the server running?', true);
+            }
+            
+            sendBtn.disabled = false;
+            input.focus();
+        }
+        
+        function clearChat() {
+            const messages = document.getElementById('messages');
+            messages.innerHTML = `
+                <div class="message bot">
+                    Chat cleared. How can I help you today?
+                    <div class="time">${getTime()}</div>
+                </div>
+            `;
+        }
+        
+        function newSession() {
+            sessionId = generateSessionId();
+            // Use timestamp + random to ensure truly unique phone number
+            const uniqueId = Date.now().toString().slice(-8) + Math.floor(Math.random() * 100);
+            document.getElementById('phoneInput').value = '+1555' + uniqueId;
+            clearChat();
+            showStatus('New session started with fresh phone number: ' + document.getElementById('phoneInput').value);
+        }
+        
+        // Enter key to send
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+        
+        // Focus input on load
+        document.getElementById('messageInput').focus();
+    </script>
+</body>
+</html>

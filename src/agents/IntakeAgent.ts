@@ -1,0 +1,300 @@
+// LLM-Powered Intake Agent - Streamlined Version
+// Handles first contact through qualification using AI for natural conversation
+// Questions asked in order: problem → name → address → preferred day/urgency → schedule
+
+import { findOrCreateCustomer, createJob, saveMessage, updateJobStatus } from '../database.js';
+import { extractEntities, generateConversationalResponse } from '../llm.js';
+
+export interface IntakeData {
+  customer_id?: number;
+  job_id?: number;
+  name?: string;
+  phone?: string;
+  address?: string;
+  service_type?: string;
+  problem_description?: string;
+  urgency?: 'high' | 'medium' | 'low';
+  preferred_day?: string;
+  preferred_time?: string;
+  status: 'greeting' | 'collecting_problem' | 'collecting_name' | 'collecting_address' | 'collecting_timing' | 'qualified' | 'disqualified';
+}
+
+export interface IntakeResult {
+  response: string;
+  isComplete: boolean;
+  handoffTo?: string;
+  data?: Record<string, any>;
+}
+
+export class IntakeAgent {
+  private data: IntakeData;
+  private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+  private messageCount: number;
+  private channel: string;
+
+  constructor(channel: string = 'sms') {
+    this.data = { status: 'greeting' };
+    this.conversationHistory = [];
+    this.messageCount = 0;
+    this.channel = channel;
+  }
+
+  // Helper to detect service type from keywords
+  private detectServiceType(message: string): string | null {
+    const lower = message.toLowerCase();
+    if (lower.includes('ac') || lower.includes('air') || lower.includes('heat') || lower.includes('hvac') || lower.includes('furnace') || lower.includes('cool')) {
+      return 'hvac';
+    } else if (lower.includes('plumb') || lower.includes('leak') || lower.includes('pipe') || lower.includes('drain') || lower.includes('toilet') || lower.includes('sink') || lower.includes('water')) {
+      return 'plumbing';
+    } else if (lower.includes('electr') || lower.includes('light') || lower.includes('outlet') || lower.includes('breaker') || lower.includes('wiring') || lower.includes('power')) {
+      return 'electrical';
+    } else if (lower.includes('appliance') || lower.includes('washer') || lower.includes('dryer') || lower.includes('dishwasher') || lower.includes('refrigerator')) {
+      return 'appliance';
+    }
+    return null;
+  }
+
+  async handleMessage(message: string, context: any): Promise<IntakeResult> {
+    const phoneNumber = typeof context === 'string' ? context : context.customerPhone;
+    this.messageCount++;
+    this.conversationHistory.push({ role: 'user', content: message });
+
+    // FIRST MESSAGE: Try to extract problem immediately (text-back reply)
+    if (this.data.status === 'greeting') {
+      const detectedService = this.detectServiceType(message);
+      
+      if (detectedService) {
+        // We detected a service type from keywords - use the whole message as problem
+        this.data.service_type = detectedService;
+        this.data.problem_description = message;
+        this.data.status = 'collecting_name';
+        await this.persistToDatabase();
+        const response = `Got it - ${message}. What's your name?`;
+        await this.saveToDatabase(message, response);
+        return { response, isComplete: false };
+      }
+      
+      // No service detected - ask for clarification
+      this.data.status = 'collecting_problem';
+      const response = "What type of service do you need help with? (AC, plumbing, electrical, etc.)";
+      await this.saveToDatabase(message, response);
+      return { response, isComplete: false };
+    }
+
+    // Extract basic info from message for subsequent messages
+    const extraction = await extractEntities(message, {
+      name: this.data.name,
+      phone: this.data.phone,
+      address: this.data.address,
+      service_type: this.data.service_type,
+      problem_description: this.data.problem_description,
+    });
+
+    console.log('[Intake] Status:', this.data.status, '| Extraction:', JSON.stringify(extraction));
+
+    // Update data with extracted info
+    if (extraction.name && !this.data.name) this.data.name = extraction.name;
+    if (extraction.phone && !this.data.phone) this.data.phone = extraction.phone;
+    if (extraction.address && !this.data.address) this.data.address = extraction.address;
+    if (extraction.service_type && extraction.service_type !== 'unknown' && !this.data.service_type) {
+      this.data.service_type = extraction.service_type;
+    }
+    if (extraction.problem_description && !this.data.problem_description) {
+      this.data.problem_description = extraction.problem_description;
+    }
+    if (extraction.urgency && extraction.urgency !== 'unknown') {
+      this.data.urgency = extraction.urgency;
+    }
+    if (extraction.preferred_time && !this.data.preferred_time) {
+      this.data.preferred_time = extraction.preferred_time;
+    }
+
+    // Ensure phone is set from the incoming number
+    if (!this.data.phone && phoneNumber) {
+      this.data.phone = phoneNumber;
+    }
+
+    // State machine for question order
+    let response: string;
+
+    switch (this.data.status) {
+      case 'collecting_problem':
+        // Try keyword detection again if LLM failed
+        if (!this.data.service_type) {
+          const detectedService = this.detectServiceType(message);
+          if (detectedService) this.data.service_type = detectedService;
+        }
+        if (!this.data.problem_description && this.data.service_type) {
+          this.data.problem_description = message;
+        }
+        
+        if (this.data.problem_description && this.data.service_type) {
+          this.data.status = 'collecting_name';
+          response = `Got it - ${this.data.problem_description}. What's your name?`;
+        } else {
+          response = "What type of service do you need help with? (AC, plumbing, electrical, etc.)";
+        }
+        break;
+
+      case 'collecting_name':
+        if (this.data.name) {
+          this.data.status = 'collecting_address';
+          response = `Thanks ${this.data.name}! What's the address where you need service?`;
+        } else {
+          response = "What's your name?";
+        }
+        break;
+
+      case 'collecting_address':
+        if (this.data.address) {
+          this.data.status = 'collecting_timing';
+          response = `Perfect! When would you prefer service? (For example: today, tomorrow, Friday, or ASAP if it's urgent)`;
+        } else {
+          response = "What's the service address?";
+        }
+        break;
+
+      case 'collecting_timing':
+        // Parse timing preference
+        const timing = this.parseTiming(message);
+        if (timing.day) this.data.preferred_day = timing.day;
+        if (timing.urgency) this.data.urgency = timing.urgency;
+        
+        // Check if we have everything
+        if (this.hasAllRequired()) {
+          await this.persistToDatabase();
+          await this.finalizeIntake();
+          response = `Great! I have everything I need. Let me get you scheduled.`;
+          await this.saveToDatabase(message, response);
+          return {
+            response,
+            isComplete: true,
+            handoffTo: this.data.urgency === 'high' ? 'Scheduling Agent (Priority)' : 'Scheduling Agent',
+            data: this.getStructuredOutput(),
+          };
+        } else {
+          response = "When would you prefer service? (today, tomorrow, Friday, or let me know if it's urgent)";
+        }
+        break;
+
+      default:
+        response = "I'm sorry, I didn't catch that. Could you tell me what service you need?";
+    }
+
+    await this.persistToDatabase();
+    await this.saveToDatabase(message, response);
+    this.conversationHistory.push({ role: 'assistant', content: response });
+
+    return {
+      response,
+      isComplete: false,
+    };
+  }
+
+  private parseTiming(message: string): { day?: string; urgency?: 'high' | 'medium' | 'low' } {
+    const lower = message.toLowerCase();
+    const result: { day?: string; urgency?: 'high' | 'medium' | 'low' } = {};
+
+    // Parse day
+    if (lower.includes('today')) result.day = 'today';
+    else if (lower.includes('tomorrow')) result.day = 'tomorrow';
+    else if (lower.includes('monday')) result.day = 'monday';
+    else if (lower.includes('tuesday')) result.day = 'tuesday';
+    else if (lower.includes('wednesday')) result.day = 'wednesday';
+    else if (lower.includes('thursday')) result.day = 'thursday';
+    else if (lower.includes('friday')) result.day = 'friday';
+    else if (lower.includes('saturday')) result.day = 'saturday';
+    else if (lower.includes('sunday')) result.day = 'sunday';
+
+    // Parse urgency
+    if (lower.includes('urgent') || lower.includes('emergency') || lower.includes('asap') || lower.includes('right away')) {
+      result.urgency = 'high';
+    } else if (lower.includes('soon') || lower.includes('this week')) {
+      result.urgency = 'medium';
+    } else {
+      result.urgency = 'low';
+    }
+
+    return result;
+  }
+
+  private hasAllRequired(): boolean {
+    return !!(
+      this.data.name &&
+      this.data.phone &&
+      this.data.address &&
+      this.data.service_type &&
+      this.data.problem_description &&
+      this.data.preferred_day
+    );
+  }
+
+  private async persistToDatabase(): Promise<void> {
+    if (!this.data.name || !this.data.phone) return;
+
+    if (!this.data.customer_id) {
+      const customer = await findOrCreateCustomer({
+        name: this.data.name,
+        phone: this.data.phone,
+        address: this.data.address || 'TBD',
+      });
+      this.data.customer_id = customer.id as number;
+    }
+
+    if (this.data.service_type && !this.data.job_id) {
+      const jobId = await createJob({
+        customer_id: this.data.customer_id,
+        service_type: this.data.service_type,
+        description: this.data.problem_description || 'Details to be collected',
+        urgency: this.data.urgency || 'medium',
+        source: this.channel,
+      });
+      this.data.job_id = jobId;
+    }
+  }
+
+  private async saveToDatabase(inbound: string, outbound: string): Promise<void> {
+    if (!this.data.customer_id) return;
+
+    await saveMessage({
+      customer_id: this.data.customer_id,
+      job_id: this.data.job_id,
+      channel: this.channel,
+      direction: 'inbound',
+      message_text: inbound,
+      agent_name: 'Intake Agent',
+    });
+
+    await saveMessage({
+      customer_id: this.data.customer_id,
+      job_id: this.data.job_id,
+      channel: this.channel,
+      direction: 'outbound',
+      message_text: outbound,
+      agent_name: 'Intake Agent',
+    });
+  }
+
+  private async finalizeIntake(): Promise<void> {
+    if (this.data.job_id) {
+      await updateJobStatus(this.data.job_id, 'qualified');
+    }
+    this.data.status = 'qualified';
+  }
+
+  private getStructuredOutput(): Record<string, any> {
+    return {
+      customer_id: this.data.customer_id,
+      job_id: this.data.job_id,
+      name: this.data.name,
+      phone: this.data.phone,
+      address: this.data.address,
+      service_type: this.data.service_type,
+      problem_description: this.data.problem_description,
+      urgency: this.data.urgency,
+      preferred_day: this.data.preferred_day,
+      preferred_time: this.data.preferred_time,
+      lead_status: 'qualified',
+    };
+  }
+}
