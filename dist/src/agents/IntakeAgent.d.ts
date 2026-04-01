@@ -23,6 +23,7 @@ export declare class IntakeAgent {
     private messageCount;
     private channel;
     constructor(channel?: string);
+    private getConversationalResponse;
     private detectServiceType;
     handleMessage(message: string, context: any): Promise<IntakeResult>;
     private parseTiming;

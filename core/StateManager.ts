@@ -39,10 +39,12 @@ export class ConversationStateManager {
     }
 
     // No stored state, return basic state
+    const derivedStatus = job ? this.mapJobStatus(job.status) : 'new';
+    console.log(`[StateManager] No state record. Job status: ${job?.status}, derived status: ${derivedStatus}`);
     return {
       customerId: customer.id,
       jobId: job?.id,
-      status: job ? this.mapJobStatus(job.status) : 'new',
+      status: derivedStatus,
       context: {},
       lastMessageAt: job ? new Date(job.updated_at) : new Date(),
     };
@@ -86,7 +88,16 @@ export class ConversationStateManager {
     const customer = await db.get('SELECT id FROM customers WHERE phone = ?', customerPhone);
     if (!customer) return;
 
+    // Delete old state
     await db.run('DELETE FROM conversation_states WHERE customer_id = ?', customer.id);
+    
+    // Insert fresh state with 'new' status to override job-derived status
+    await db.run(
+      `INSERT INTO conversation_states (customer_id, status, current_agent, context, updated_at)
+       VALUES (?, 'new', NULL, '{}', CURRENT_TIMESTAMP)`,
+      [customer.id]
+    );
+    console.log(`[StateManager] Cleared state and inserted fresh 'new' status for customer ${customer.id}`);
   }
 
   private mapJobStatus(jobStatus: string): ConversationState['status'] {

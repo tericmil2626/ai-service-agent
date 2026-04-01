@@ -17,6 +17,16 @@ class IntakeAgent {
         this.messageCount = 0;
         this.channel = channel;
     }
+    // Helper to add conversational warmth and vary fillers
+    getConversationalResponse(type) {
+        const acknowledgements = ['Got it!', 'Got it —', 'Absolutely!', 'Sure thing!', 'Of course!'];
+        const thanks = ['Thanks!', 'Thanks for that!', 'Thank you!', 'Appreciate it!', 'Great, thanks!'];
+        const positives = ['Perfect!', 'Wonderful!', 'Excellent!', 'Great!', 'Sounds good!'];
+        const pool = type === 'acknowledgement' ? acknowledgements
+            : type === 'thanks' ? thanks
+                : positives;
+        return pool[Math.floor(Math.random() * pool.length)];
+    }
     // Helper to detect service type from keywords
     detectServiceType(message) {
         const lower = message.toLowerCase();
@@ -47,7 +57,11 @@ class IntakeAgent {
                 this.data.problem_description = message;
                 this.data.status = 'collecting_name';
                 await this.persistToDatabase();
-                const response = `Got it - ${message}. What's your name?`;
+                const serviceName = detectedService === 'hvac' ? 'an AC/heating issue' :
+                    detectedService === 'plumbing' ? 'a plumbing problem' :
+                        detectedService === 'electrical' ? 'an electrical issue' :
+                            'that service need';
+                const response = `${this.getConversationalResponse('acknowledgement')} ${serviceName}. What's your name?`;
                 await this.saveToDatabase(message, response);
                 return { response, isComplete: false };
             }
@@ -104,7 +118,7 @@ class IntakeAgent {
                 }
                 if (this.data.problem_description && this.data.service_type) {
                     this.data.status = 'collecting_name';
-                    response = `Got it - ${this.data.problem_description}. What's your name?`;
+                    response = `${this.getConversationalResponse('acknowledgement')} ${this.data.problem_description}. What's your name?`;
                 }
                 else {
                     response = "What type of service do you need help with? (AC, plumbing, electrical, etc.)";
@@ -113,7 +127,7 @@ class IntakeAgent {
             case 'collecting_name':
                 if (this.data.name) {
                     this.data.status = 'collecting_address';
-                    response = `Thanks ${this.data.name}! What's the address where you need service?`;
+                    response = `${this.getConversationalResponse('thanks')} ${this.data.name}! What's the address where you need service?`;
                 }
                 else {
                     response = "What's your name?";
@@ -122,7 +136,7 @@ class IntakeAgent {
             case 'collecting_address':
                 if (this.data.address) {
                     this.data.status = 'collecting_timing';
-                    response = `Perfect! When would you prefer service? (For example: today, tomorrow, Friday, or ASAP if it's urgent)`;
+                    response = `${this.getConversationalResponse('positive')} When would you prefer service? (For example: today, tomorrow, Friday, or ASAP if it's urgent)`;
                 }
                 else {
                     response = "What's the service address?";
@@ -135,11 +149,18 @@ class IntakeAgent {
                     this.data.preferred_day = timing.day;
                 if (timing.urgency)
                     this.data.urgency = timing.urgency;
+                // If urgency is set but no specific day, treat as ASAP
+                if (this.data.urgency === 'high' && !this.data.preferred_day) {
+                    this.data.preferred_day = 'ASAP';
+                }
                 // Check if we have everything
                 if (this.hasAllRequired()) {
                     await this.persistToDatabase();
                     await this.finalizeIntake();
-                    response = `Great! I have everything I need. Let me get you scheduled.`;
+                    const urgencyAck = this.data.urgency === 'high'
+                        ? `I understand this is urgent — `
+                        : `Great! `;
+                    response = `${urgencyAck}I have everything I need. Let me get you scheduled.`;
                     await this.saveToDatabase(message, response);
                     return {
                         response,
@@ -149,7 +170,7 @@ class IntakeAgent {
                     };
                 }
                 else {
-                    response = "When would you prefer service? (today, tomorrow, Friday, or let me know if it's urgent)";
+                    response = "When would you prefer service? You can say today, tomorrow, a specific day, or ASAP if it's urgent.";
                 }
                 break;
             default:
@@ -203,7 +224,7 @@ class IntakeAgent {
             this.data.address &&
             this.data.service_type &&
             this.data.problem_description &&
-            this.data.preferred_day);
+            (this.data.preferred_day || this.data.urgency));
     }
     async persistToDatabase() {
         if (!this.data.name || !this.data.phone)

@@ -220,11 +220,15 @@ export class ServiceBusinessOrchestrator {
 
       // Initialize scheduling agent with intake data
       const schedulingAgent = this.agentLoader.getAgent('scheduling');
+      console.log('[Orchestrator] Handoff to scheduling. Response data:', JSON.stringify(response.data));
       if (schedulingAgent && response.data) {
         if (schedulingAgent.initialize) {
           await schedulingAgent.initialize(response.data);
         }
         state.context.schedulingData = response.data;
+        console.log('[Orchestrator] Set schedulingData:', JSON.stringify(state.context.schedulingData));
+      } else {
+        console.error('[Orchestrator] Missing scheduling agent or response data:', { hasAgent: !!schedulingAgent, hasData: !!response.data });
       }
     }
 
@@ -246,8 +250,12 @@ export class ServiceBusinessOrchestrator {
     }
 
     // Restore scheduling data if available
+    console.log('[Orchestrator] handleScheduling. schedulingData:', JSON.stringify(state.context.schedulingData));
     if (state.context.schedulingData && schedulingAgent.initialize) {
+      console.log('[Orchestrator] Restoring schedulingData to agent');
       await schedulingAgent.initialize(state.context.schedulingData);
+    } else {
+      console.log('[Orchestrator] No schedulingData to restore');
     }
 
     // Restore agent state if available

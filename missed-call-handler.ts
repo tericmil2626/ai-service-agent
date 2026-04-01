@@ -37,14 +37,28 @@ const DEFAULT_TEXT_BACK_MESSAGE = (businessName: string) =>
   `What can we help you with today?`;
 
 export class MissedCallHandler {
-  private smsProvider: SMSProvider | null;
   private businessName: string;
   private textBackMessage: string;
 
   constructor(businessName?: string, customMessage?: string) {
-    this.smsProvider = getSMSProvider();
     this.businessName = businessName || process.env.BUSINESS_NAME || 'our service team';
     this.textBackMessage = customMessage || DEFAULT_TEXT_BACK_MESSAGE(this.businessName);
+  }
+
+  /** Re-check provider each call so env var changes and dotenv timing aren't an issue */
+  private getProvider(): SMSProvider | null {
+    const provider = getSMSProvider();
+    if (!provider) {
+      console.error('[MissedCall] No SMS provider available. Env vars present:',
+        `TWILIO_ACCOUNT_SID=${!!process.env.TWILIO_ACCOUNT_SID}`,
+        `TWILIO_AUTH_TOKEN=${!!process.env.TWILIO_AUTH_TOKEN}`,
+        `TWILIO_PHONE_NUMBER=${!!process.env.TWILIO_PHONE_NUMBER}`,
+        `SIGNALWIRE_PROJECT_ID=${!!process.env.SIGNALWIRE_PROJECT_ID}`,
+        `SIGNALWIRE_TOKEN=${!!process.env.SIGNALWIRE_TOKEN}`,
+        `SIGNALWIRE_PHONE_NUMBER=${!!process.env.SIGNALWIRE_PHONE_NUMBER}`,
+      );
+    }
+    return provider;
   }
 
   /**
@@ -96,38 +110,54 @@ export class MissedCallHandler {
   }
 
   /**
-   * Send the text-back SMS to a missed caller
+   * Send the text-back SMS to a missed caller, with retry on failure
    */
   private async sendTextBack(
     to: string,
     missedCallId: number
   ): Promise<{ success: boolean; message?: string; error?: string }> {
-    if (!this.smsProvider) {
+    const provider = this.getProvider();
+    if (!provider) {
       const error = 'No SMS provider configured - cannot send text-back';
       console.error(`[MissedCall] ${error}`);
       return { success: false, error };
     }
 
-    // Skip spam check for now - just send the text-back
-    console.log(`[MissedCall] Sending text-back to ${to}`);
-
-    // Send the SMS
     const message = this.textBackMessage;
-    console.log(`[MissedCall] Sending text-back to ${to}: ${message}`);
+    console.log(`[MissedCall] Sending text-back to ${to}: "${message}"`);
 
-    const result = await this.smsProvider.sendSMS(to, message);
+    const MAX_ATTEMPTS = 3;
+    let lastError: string | undefined;
 
-    if (result.success) {
-      console.log(`[MissedCall] Text-back sent successfully: ${result.messageId}`);
-      
-      // Update the missed call record
-      await updateMissedCallTextBack(missedCallId, message);
-      
-      return { success: true, message };
-    } else {
-      console.error(`[MissedCall] Failed to send text-back: ${result.error}`);
-      return { success: false, error: result.error };
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (attempt > 1) {
+        const backoffMs = attempt * 2000;
+        console.log(`[MissedCall] Retry attempt ${attempt}/${MAX_ATTEMPTS} in ${backoffMs}ms...`);
+        await new Promise(res => setTimeout(res, backoffMs));
+      }
+
+      console.log(`[MissedCall] Attempting to send SMS to ${to} (attempt ${attempt}/${MAX_ATTEMPTS})`);
+      let result: { success: boolean; messageId?: string; error?: string };
+      try {
+        result = await provider.sendSMS(to, message);
+      } catch (err: any) {
+        lastError = err?.message || String(err);
+        console.error(`[MissedCall] Text-back attempt ${attempt}/${MAX_ATTEMPTS} threw an exception for ${to}:`, err);
+        continue;
+      }
+
+      if (result.success) {
+        console.log(`[MissedCall] Text-back sent successfully on attempt ${attempt}: messageId=${result.messageId}`);
+        await updateMissedCallTextBack(missedCallId, message);
+        return { success: true, message };
+      }
+
+      lastError = result.error;
+      console.error(`[MissedCall] Text-back attempt ${attempt}/${MAX_ATTEMPTS} failed for ${to}: ${result.error}`);
     }
+
+    console.error(`[MissedCall] All ${MAX_ATTEMPTS} send attempts failed for ${to}. Last error: ${lastError}`);
+    return { success: false, error: lastError };
   }
 
   /**

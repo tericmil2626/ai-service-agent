@@ -10,6 +10,7 @@ import { getDb, initDatabase } from './database';
 import { OrchestratorConfig } from './types/agents';
 import { MissedCallHandler } from './missed-call-handler';
 import { VoiceAgent } from './voice-agent';
+import { getAudioFilePath } from './elevenlabs-tts.js';
 
 // Load configuration from environment or database
 async function loadConfig(): Promise<OrchestratorConfig> {
@@ -47,6 +48,23 @@ async function startServer() {
   // Initialize database (creates tables if they don't exist)
   await initDatabase();
 
+  // Log SMS provider config at startup
+  const hasTwilioAtStartup = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER);
+  const hasSWAtStartup = !!(process.env.SIGNALWIRE_PROJECT_ID && process.env.SIGNALWIRE_TOKEN && process.env.SIGNALWIRE_PHONE_NUMBER);
+  if (hasTwilioAtStartup) {
+    console.log('[API] SMS provider: Twilio (TWILIO_PHONE_NUMBER=' + process.env.TWILIO_PHONE_NUMBER + ')');
+  } else if (hasSWAtStartup) {
+    console.log('[API] SMS provider: SignalWire (SIGNALWIRE_PHONE_NUMBER=' + process.env.SIGNALWIRE_PHONE_NUMBER + ')');
+  } else {
+    console.error('[API] WARNING: No SMS provider configured! Missed call text-backs will not work.');
+    console.error('[API]   TWILIO_ACCOUNT_SID:', process.env.TWILIO_ACCOUNT_SID ? 'set' : 'MISSING');
+    console.error('[API]   TWILIO_AUTH_TOKEN:', process.env.TWILIO_AUTH_TOKEN ? 'set' : 'MISSING');
+    console.error('[API]   TWILIO_PHONE_NUMBER:', process.env.TWILIO_PHONE_NUMBER || 'MISSING');
+    console.error('[API]   SIGNALWIRE_PROJECT_ID:', process.env.SIGNALWIRE_PROJECT_ID ? 'set' : 'MISSING');
+    console.error('[API]   SIGNALWIRE_TOKEN:', process.env.SIGNALWIRE_TOKEN ? 'set' : 'MISSING');
+    console.error('[API]   SIGNALWIRE_PHONE_NUMBER:', process.env.SIGNALWIRE_PHONE_NUMBER || 'MISSING');
+  }
+
   // Initialize missed call handler
   const missedCallHandler = new MissedCallHandler(config.businessName);
 
@@ -59,6 +77,11 @@ async function startServer() {
   });
 
   await app.register(formbody);
+
+  // Utility to add delay between SMS messages (prevents carrier filtering)
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const lastSMSTime = new Map<string, number>();
+  const MIN_SMS_INTERVAL = 3000; // Minimum 3 seconds between SMS to same number
 
   // SMS webhook
   app.post('/webhook/sms', async (request, reply) => {
@@ -80,8 +103,21 @@ async function startServer() {
       if (textBackResult.success) {
         // It was a text-back reply, send SMS via API
         console.log('[SMS Webhook] Text-back reply processed, sending SMS...');
+        
+        // Add delay if we've sent to this number recently (prevents carrier filtering)
+        const now = Date.now();
+        const lastSent = lastSMSTime.get(From) || 0;
+        const timeSinceLast = now - lastSent;
+        if (timeSinceLast < MIN_SMS_INTERVAL) {
+          const waitTime = MIN_SMS_INTERVAL - timeSinceLast;
+          console.log(`[SMS Webhook] Waiting ${waitTime}ms before sending to prevent carrier filtering...`);
+          await delay(waitTime);
+        }
+        
         const { sendSMS } = await import('./signalwire-fetch.js');
         const smsResult = await sendSMS(From, textBackResult.response || 'Thanks for your message!');
+        lastSMSTime.set(From, Date.now());
+        
         if (smsResult.success) {
           console.log('[SMS Webhook] Text-back SMS sent successfully:', smsResult.messageId);
         } else {
@@ -103,8 +139,20 @@ async function startServer() {
       console.log('[SMS Webhook] Orchestrator response:', result.response.substring(0, 50) + '...');
 
       // Send SMS response via SignalWire API (more reliable than TwiML for SMS)
+      // Add delay if we've sent to this number recently (prevents carrier filtering)
+      const now2 = Date.now();
+      const lastSent2 = lastSMSTime.get(From) || 0;
+      const timeSinceLast2 = now2 - lastSent2;
+      if (timeSinceLast2 < MIN_SMS_INTERVAL) {
+        const waitTime2 = MIN_SMS_INTERVAL - timeSinceLast2;
+        console.log(`[SMS Webhook] Waiting ${waitTime2}ms before sending to prevent carrier filtering...`);
+        await delay(waitTime2);
+      }
+      
       const { sendSMS } = await import('./signalwire-fetch.js');
       const smsResult = await sendSMS(From, result.response || 'Thanks for your message!');
+      lastSMSTime.set(From, Date.now());
+      
       if (smsResult.success) {
         console.log('[SMS Webhook] SMS sent successfully:', smsResult.messageId);
       } else {
@@ -121,6 +169,17 @@ async function startServer() {
     }
   });
 
+  // SMS delivery status callback from SignalWire
+  app.post('/webhook/sms-status', async (request, reply) => {
+    const { MessageSid, MessageStatus, To, ErrorCode, ErrorMessage } = request.body as any;
+    if (ErrorCode) {
+      console.error(`[SMS Status] ${MessageSid} to ${To}: ${MessageStatus} — error ${ErrorCode}: ${ErrorMessage}`);
+    } else {
+      console.log(`[SMS Status] ${MessageSid} to ${To}: ${MessageStatus}`);
+    }
+    return '';
+  });
+
   // Voice webhook - handles incoming calls with AI agent
   app.post('/webhook/voice', async (request, reply) => {
     let { From, To, CallSid } = request.body as any;
@@ -135,7 +194,7 @@ async function startServer() {
     const webhookBaseUrl = process.env.WEBHOOK_BASE_URL || '';
 
     if (voiceAiEnabled) {
-      // AI voice agent handles the call
+      // AI voice agent handles the call - returns LaML XML
       try {
         const laml = await voiceAgent.handleIncomingCall({ callSid: CallSid, from: From, to: To });
         reply.type('text/xml');
@@ -207,30 +266,129 @@ async function startServer() {
       recordingUrl: RecordingUrl,
     });
 
+    // Check if this was a short call (potential hangup before completing intake)
+    const duration = parseInt(CallDuration, 10) || 0;
+    if (duration > 0 && duration < 60) {
+      console.log(`[Voice Status] Short call detected (${duration}s), checking if intake was completed...`);
+      
+      // Check if customer has a recent job (completed intake)
+      const db = await getDb();
+      const customer = await db.get(
+        `SELECT c.id, c.name FROM customers c WHERE c.phone = ?`,
+        [From]
+      );
+      
+      if (customer) {
+        const recentJob = await db.get(
+          `SELECT j.id, j.created_at FROM jobs j 
+           WHERE j.customer_id = ? AND j.created_at > datetime('now', '-5 minutes')
+           ORDER BY j.created_at DESC LIMIT 1`,
+          [customer.id]
+        );
+        
+        if (!recentJob) {
+          console.log(`[Voice Status] No recent job for customer ${customer.id}, triggering missed call SMS`);
+          // Trigger missed call SMS
+          await missedCallHandler.handleCallStatus({
+            from: From,
+            to: To,
+            callSid: CallSid,
+            callStatus: 'no-answer',
+            direction: 'inbound',
+          });
+        } else {
+          console.log(`[Voice Status] Recent job found (id=${recentJob.id}), intake was completed`);
+        }
+      } else {
+        console.log(`[Voice Status] No customer found for ${From}, triggering missed call SMS`);
+        // No customer record = definitely didn't complete intake
+        await missedCallHandler.handleCallStatus({
+          from: From,
+          to: To,
+          callSid: CallSid,
+          callStatus: 'no-answer',
+          direction: 'inbound',
+        });
+      }
+    }
+
     return { received: true };
   });
 
-  // Call status webhook - triggers text-back on missed calls (forwarded calls)
+  // Call status webhook - triggers text-back on missed calls (forwarded calls AND voice AI calls)
   app.post('/webhook/call-status', async (request, reply) => {
-    let { From, To, CallSid, CallStatus, Direction } = request.body as any;
+    let { From, To, CallSid, CallStatus, DialCallStatus, Direction, CallDuration } = request.body as any;
     // Ensure phone numbers have + prefix for E.164 format and trim whitespace
     From = From?.trim();
     To = To?.trim();
     if (From && !From.startsWith('+')) From = '+' + From;
     if (To && !To.startsWith('+')) To = '+' + To;
-    console.log('[Call Status] ' + CallStatus + ' from ' + From + ' to ' + To);
+    // DialCallStatus is set when this fires as a Dial action callback (forwarded calls)
+    // Use DialCallStatus when present, otherwise fall back to CallStatus
+    const effectiveStatus = (DialCallStatus || CallStatus);
+    console.log('[Call Status] CallStatus=' + CallStatus + ' DialCallStatus=' + DialCallStatus + ' effective=' + effectiveStatus + ' duration=' + CallDuration + 's from ' + From + ' to ' + To);
+    console.log('[Call Status] Full payload:', JSON.stringify(request.body));
     
-    // Only handle inbound calls that were missed
+    // Only handle inbound calls
     if (Direction !== 'inbound') {
       return { handled: false, reason: 'Not an inbound call' };
     }
     
+    // Check if this is a voice AI call that ended quickly (potential hangup before intake completed)
+    // This happens when the voice AI answers but the caller hangs up before completing intake
+    const duration = parseInt(CallDuration, 10) || 0;
+    if (effectiveStatus === 'completed' && duration > 0 && duration < 60) {
+      console.log(`[Call Status] Short voice AI call detected (${duration}s), checking if intake was completed...`);
+      
+      // Check if customer has a recent job (completed intake)
+      const db = await getDb();
+      const customer = await db.get(
+        `SELECT c.id, c.name FROM customers c WHERE c.phone = ?`,
+        [From]
+      );
+      
+      let shouldSendTextBack = false;
+      
+      if (customer) {
+        const recentJob = await db.get(
+          `SELECT j.id, j.created_at FROM jobs j 
+           WHERE j.customer_id = ? AND j.created_at > datetime('now', '-5 minutes')
+           ORDER BY j.created_at DESC LIMIT 1`,
+          [customer.id]
+        );
+        
+        if (!recentJob) {
+          console.log(`[Call Status] No recent job for customer ${customer.id}, will trigger missed call SMS`);
+          shouldSendTextBack = true;
+        } else {
+          console.log(`[Call Status] Recent job found (id=${recentJob.id}), intake was completed`);
+        }
+      } else {
+        console.log(`[Call Status] No customer found for ${From}, will trigger missed call SMS`);
+        shouldSendTextBack = true;
+      }
+      
+      if (shouldSendTextBack) {
+        // Trigger missed call SMS by faking a 'no-answer' status
+        const result = await missedCallHandler.handleCallStatus({
+          from: From,
+          to: To,
+          callSid: CallSid,
+          callStatus: 'no-answer',
+          direction: Direction,
+        });
+        
+        return { ...result, voiceAiHangup: true };
+      }
+    }
+    
+    // Handle forwarded call statuses (original behavior)
     try {
       const result = await missedCallHandler.handleCallStatus({
         from: From,
         to: To,
         callSid: CallSid,
-        callStatus: CallStatus,
+        callStatus: effectiveStatus,
         direction: Direction,
       });
       
@@ -239,6 +397,41 @@ async function startServer() {
       console.error('Call status webhook error:', error);
       return { handled: false, error: 'Failed to process call status' };
     }
+  });
+
+  // Test SMS endpoint - verifies provider config and can send a real message
+  app.post('/api/test-sms', async (request, reply) => {
+    const { to, message } = request.body as any;
+    if (!to) {
+      reply.code(400);
+      return { error: 'Missing required field: to' };
+    }
+
+    const testMessage = message || `[Test] SMS delivery check from ${config.businessName} — ${new Date().toISOString()}`;
+
+    // Log which provider will be used
+    const hasTwilio = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER);
+    const hasSignalWire = !!(process.env.SIGNALWIRE_PROJECT_ID && process.env.SIGNALWIRE_TOKEN && process.env.SIGNALWIRE_PHONE_NUMBER);
+    const provider = hasTwilio ? 'twilio' : hasSignalWire ? 'signalwire' : 'none';
+
+    console.log(`[Test SMS] provider=${provider} to=${to} message="${testMessage}"`);
+    console.log(`[Test SMS] Env: TWILIO_ACCOUNT_SID=${!!process.env.TWILIO_ACCOUNT_SID} TWILIO_AUTH_TOKEN=${!!process.env.TWILIO_AUTH_TOKEN} TWILIO_PHONE_NUMBER=${process.env.TWILIO_PHONE_NUMBER || 'MISSING'}`);
+    console.log(`[Test SMS] Env: SIGNALWIRE_PROJECT_ID=${!!process.env.SIGNALWIRE_PROJECT_ID} SIGNALWIRE_TOKEN=${!!process.env.SIGNALWIRE_TOKEN} SIGNALWIRE_PHONE_NUMBER=${process.env.SIGNALWIRE_PHONE_NUMBER || 'MISSING'}`);
+
+    if (provider === 'none') {
+      reply.code(503);
+      return { success: false, error: 'No SMS provider configured', provider, env: { hasTwilio, hasSignalWire } };
+    }
+
+    const { sendSMS } = await import('./signalwire-fetch.js');
+    const sendFn = hasTwilio
+      ? (await import('./twilio.js')).sendSMS
+      : sendSMS;
+
+    const result = await sendFn(to, testMessage);
+    console.log(`[Test SMS] Result:`, result);
+
+    return { ...result, provider, to, message: testMessage };
   });
 
   // Get missed call stats
@@ -492,6 +685,37 @@ async function startServer() {
       console.error('[Cron] Error processing follow-ups:', error);
       return { success: false, error: 'Failed to process follow-ups' };
     }
+  });
+
+  // Serve audio files for ElevenLabs TTS
+  app.get('/audio/:filename', async (request, reply) => {
+    const { filename } = request.params as any;
+    const filePath = getAudioFilePath(filename);
+
+    if (!filePath) {
+      reply.code(404);
+      return { error: 'Audio file not found' };
+    }
+
+    try {
+      const fs = await import('fs');
+      const audioBuffer = fs.readFileSync(filePath);
+      reply.type('audio/mpeg');
+      return audioBuffer;
+    } catch (error) {
+      console.error('[Audio] Failed to serve file:', error);
+      reply.code(500);
+      return { error: 'Failed to serve audio' };
+    }
+  });
+
+  // Get voice configuration status
+  app.get('/api/tts-config', async () => {
+    return {
+      elevenlabs: voiceAgent.isElevenLabsEnabled(),
+      voice: process.env.VOICE_TTS_VOICE || 'Polly.Amy',
+      format: 'LaML XML with ElevenLabs audio files',
+    };
   });
 
   app.get('/health', async () => {

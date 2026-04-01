@@ -40,7 +40,10 @@ export class SchedulingAgent {
   async initialize(data: SchedulingData): Promise<void> {
     this.data = data;
     this.initialized = true;
-    this.awaitingConfirmation = false;
+    // Only reset awaitingConfirmation on first initialization, not on state restore
+    if (this.proposedSlots.length === 0) {
+      this.awaitingConfirmation = false;
+    }
     // Don't generate slots yet - wait for first handleMessage call
   }
 
@@ -49,8 +52,16 @@ export class SchedulingAgent {
    * Routes to appropriate method based on conversation state
    */
   async handleMessage(message: string, context: any): Promise<{ response: string; isComplete: boolean; handoffTo?: string; data?: any }> {
+    console.log('[SchedulingAgent] handleMessage called:', { 
+      initialized: this.initialized, 
+      hasData: !!this.data, 
+      proposedSlotsCount: this.proposedSlots.length,
+      awaitingConfirmation: this.awaitingConfirmation 
+    });
+
     // If not initialized yet, we can't proceed
     if (!this.initialized || !this.data) {
+      console.log('[SchedulingAgent] Not initialized, returning error');
       return {
         response: "I'm sorry, I don't have your service details. Let me connect you back to our receptionist.",
         isComplete: false,
@@ -59,7 +70,9 @@ export class SchedulingAgent {
 
     // If we haven't proposed slots yet, this is the first interaction
     if (this.proposedSlots.length === 0) {
+      console.log('[SchedulingAgent] No slots proposed yet, calling receiveFromReceptionist');
       const result = await this.receiveFromReceptionist(this.data);
+      console.log('[SchedulingAgent] Slots proposed:', result.slots?.length, 'awaitingConfirmation:', this.awaitingConfirmation);
       return {
         response: result.response,
         isComplete: false,
@@ -69,13 +82,17 @@ export class SchedulingAgent {
 
     // If we're awaiting confirmation, treat this as a time selection
     if (this.awaitingConfirmation) {
+      console.log('[SchedulingAgent] Awaiting confirmation, handling time selection:', message);
       const result = await this.handleTimeSelection(message);
+      console.log('[SchedulingAgent] Time selection result:', { confirmed: result.confirmed, hasAppointment: !!result.appointment });
       return {
         response: result.response,
         isComplete: result.confirmed || false,
         data: result.appointment ? { appointment: result.appointment } : undefined,
       };
     }
+
+    console.log('[SchedulingAgent] Not awaiting confirmation, but slots exist. Treating as time selection anyway.');
 
     // Otherwise, treat as time selection
     const result = await this.handleTimeSelection(message);
@@ -101,6 +118,9 @@ export class SchedulingAgent {
 
     // Get available slots based on urgency
     this.proposedSlots = await this.getAvailableSlots(data.urgency || 'medium');
+
+    // Set flag that we're waiting for customer to pick a time
+    this.awaitingConfirmation = true;
 
     // Generate natural language response with LLM
     const response = await generateSchedulingResponse(data, this.proposedSlots);

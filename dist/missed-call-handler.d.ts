@@ -6,10 +6,11 @@ interface MissedCallData {
     direction?: 'inbound' | 'outbound';
 }
 export declare class MissedCallHandler {
-    private smsProvider;
     private businessName;
     private textBackMessage;
     constructor(businessName?: string, customMessage?: string);
+    /** Re-check provider each call so env var changes and dotenv timing aren't an issue */
+    private getProvider;
     /**
      * Process a call status webhook from Twilio/SignalWire
      * Triggers text-back if call was missed
@@ -21,7 +22,7 @@ export declare class MissedCallHandler {
         error?: string;
     }>;
     /**
-     * Send the text-back SMS to a missed caller
+     * Send the text-back SMS to a missed caller, with retry on failure
      */
     private sendTextBack;
     /**

@@ -1,54 +1,51 @@
 // Twilio SDK integration
-// Install with: npm install twilio
-// Then uncomment the import below
+import twilio from 'twilio';
 
-// import twilio from 'twilio';
+// NOTE: env vars are read inside each function to ensure dotenv has loaded first.
+// Top-level reads happen before dotenv.config() due to import hoisting.
 
-// Mock implementation for when twilio is not installed
-const mockClient = {
-  messages: {
-    create: async ({ body, from, to }: { body: string; from: string; to: string }) => {
-      console.log(`[MOCK Twilio SMS] To: ${to}, From: ${from}, Message: ${body}`);
-      return { sid: `mock-${Date.now()}` };
-    }
-  },
-  calls: {
-    create: async ({ url, to, from }: { url: string; to: string; from: string }) => {
-      console.log(`[MOCK Twilio Call] To: ${to}, From: ${from}, URL: ${url}`);
-      return { sid: `mock-call-${Date.now()}` };
-    }
+function getTwilioClient() {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (accountSid && authToken) {
+    return twilio(accountSid, authToken);
   }
-};
-
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const fromNumber = process.env.TWILIO_PHONE_NUMBER;
-
-// Use mock client if twilio isn't installed
-const client = mockClient;
+  return null;
+}
 
 export async function sendSMS(to: string, message: string): Promise<{
   success: boolean;
   messageId?: string;
   error?: string;
 }> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+  console.log(`[Twilio] sendSMS called — accountSid=${accountSid ? 'set' : 'MISSING'} authToken=${authToken ? 'set' : 'MISSING'} from=${fromNumber || 'MISSING'} to=${to}`);
+
+  if (!accountSid || !authToken) {
+    return { success: false, error: 'Twilio credentials (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN) not configured' };
+  }
   if (!fromNumber) {
     return { success: false, error: 'TWILIO_PHONE_NUMBER not configured' };
   }
 
   try {
+    const client = twilio(accountSid, authToken);
     const result = await client.messages.create({
       body: message,
       from: fromNumber,
       to: to
     });
 
+    console.log(`[Twilio] SMS sent to ${to}: sid=${result.sid} status=${(result as any).status}`);
     return {
       success: true,
       messageId: result.sid
     };
   } catch (error: any) {
-    console.error('Twilio SMS error:', error);
+    console.error(`[Twilio] SMS error to ${to}:`, error.message, error.code ? `(code ${error.code})` : '');
     return {
       success: false,
       error: error.message
@@ -61,11 +58,16 @@ export async function makeCall(to: string, twimlUrl: string): Promise<{
   callId?: string;
   error?: string;
 }> {
-  if (!fromNumber) {
-    return { success: false, error: 'TWILIO_PHONE_NUMBER not configured' };
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    return { success: false, error: 'Twilio credentials not fully configured' };
   }
 
   try {
+    const client = twilio(accountSid, authToken);
     const call = await client.calls.create({
       url: twimlUrl,
       to: to,
@@ -91,8 +93,11 @@ export function validateTwilioRequest(
   url: string,
   params: Record<string, any>
 ): boolean {
-  // Mock validation - always returns true
-  // When twilio is installed, use: return twilio.validateRequest(authToken, signature, url, params);
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const storedAuthToken = process.env.TWILIO_AUTH_TOKEN;
+  if (accountSid && storedAuthToken) {
+    return twilio.validateRequest(authToken, signature, url, params);
+  }
   console.log('[MOCK] Twilio request validation (always returns true)');
   return true;
 }
