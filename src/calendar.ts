@@ -5,9 +5,9 @@ import { OAuth2Client } from 'google-auth-library';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
-// Path to OAuth credentials
-const CREDENTIALS_PATH = join(process.cwd(), 'data', 'client_secret.json');
-const TOKEN_PATH = join(process.cwd(), 'data', 'gcal_token.json');
+// Path to OAuth credentials - use absolute path
+const CREDENTIALS_PATH = '/root/service-business/data/client_secret.json';
+const TOKEN_PATH = '/root/service-business/data/gcal_token.json';
 
 export interface CalendarEvent {
   summary: string;
