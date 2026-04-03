@@ -6,7 +6,7 @@
     "build": "tsc",
     "dev": "SERVICE_TIER=starter tsx watch api-v2.ts",
     "dev:pro": "SERVICE_TIER=professional tsx watch api-v2.ts",
-    "start": "node dist/api-v2.js",
+    "start": "node dist/api.js",
     "db:init": "node dist/database.js init",
     "test": "tsx test-orchestrator.ts",
     "cron": "tsx cron-jobs.ts",
