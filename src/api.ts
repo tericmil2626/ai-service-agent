@@ -3,8 +3,10 @@ import cors from '@fastify/cors';
 import dotenv from 'dotenv';
 import { IntakeAgent } from './agents/IntakeAgent.js';
 import { SchedulingAgent } from './agents/SchedulingAgent.js';
+import { DispatchAgent, getAllTechnicians, createTechnician } from './agents/DispatchAgent.js';
 import { getDb, dbGet, dbAll, dbRun } from './database.js';
 import { getSMSProvider } from './sms.js';
+import { getCalendarService } from './calendar.js';
 
 dotenv.config();
 
@@ -19,7 +21,7 @@ const sms = getSMSProvider();
 app.register(import('@fastify/formbody'));
 
 // Store agent instances per conversation (in production, use Redis)
-const agentSessions = new Map<string, { intake: IntakeAgent; scheduling?: SchedulingAgent }>();
+const agentSessions = new Map<string, { intake: IntakeAgent; scheduling?: SchedulingAgent; dispatch?: DispatchAgent }>();
 
 async function startServer() {
   // CORS for dashboard
@@ -343,6 +345,103 @@ async function startServer() {
     return { success: true, message: 'Appointment updated' };
   });
 
+  // ========== GOOGLE CALENDAR API ==========
+
+  // Get Google Calendar auth URL
+  app.get('/api/calendar/auth', async () => {
+    const calendarService = getCalendarService();
+    await calendarService.initialize();
+    const authUrl = calendarService.getAuthUrl();
+    return { auth_url: authUrl };
+  });
+
+  // Exchange OAuth code for token
+  app.post('/api/calendar/auth/callback', async (request) => {
+    const { code } = request.body as any;
+    const calendarService = getCalendarService();
+    const success = await calendarService.exchangeCode(code);
+    return { success, message: success ? 'Authentication successful' : 'Authentication failed' };
+  });
+
+  // Check calendar status
+  app.get('/api/calendar/status', async () => {
+    const calendarService = getCalendarService();
+    const initialized = calendarService.isInitialized();
+    return { initialized, message: initialized ? 'Connected' : 'Not connected' };
+  });
+
+  // ========== DISPATCH API ==========
+
+  // Dispatch an appointment to a technician
+  app.post('/api/dispatch/:appointmentId', async (request) => {
+    const { appointmentId } = request.params as any;
+
+    // Get appointment details
+    const appointment = await dbGet(`
+      SELECT 
+        a.id as appointment_id,
+        a.job_id,
+        a.scheduled_date,
+        a.scheduled_time,
+        j.customer_id,
+        j.service_type,
+        j.description as problem_description,
+        j.urgency,
+        c.name as customer_name,
+        c.phone as customer_phone,
+        c.address
+      FROM appointments a
+      JOIN jobs j ON a.job_id = j.id
+      JOIN customers c ON j.customer_id = c.id
+      WHERE a.id = ?
+    `, [appointmentId]);
+
+    if (!appointment) {
+      return { success: false, error: 'Appointment not found' };
+    }
+
+    // Create dispatch agent and assign
+    const dispatchAgent = new DispatchAgent();
+    const result = await dispatchAgent.receiveFromScheduling(appointment as any);
+
+    return {
+      success: result.assigned,
+      message: result.response,
+      technician: result.technician,
+    };
+  });
+
+  // Get dispatch status for an appointment
+  app.get('/api/dispatch/:appointmentId', async (request) => {
+    const { appointmentId } = request.params as any;
+
+    const dispatch = await dbGet(`
+      SELECT 
+        a.id as appointment_id,
+        a.status,
+        a.scheduled_date,
+        a.scheduled_time,
+        t.id as technician_id,
+        t.name as technician_name,
+        t.phone as technician_phone,
+        c.name as customer_name,
+        c.address,
+        j.service_type,
+        j.urgency
+      FROM appointments a
+      JOIN jobs j ON a.job_id = j.id
+      JOIN customers c ON j.customer_id = c.id
+      LEFT JOIN technicians t ON a.technician_id = t.id
+      WHERE a.id = ?
+    `, [appointmentId]);
+
+    if (!dispatch) {
+      return { success: false, error: 'Appointment not found' };
+    }
+
+    return { success: true, dispatch };
+  });
+
   // ========== TECHNICIANS API ==========
 
   // Get all technicians
@@ -358,15 +457,39 @@ async function startServer() {
     return { technicians };
   });
 
+  // Create new technician
+  app.post('/api/technicians', async (request) => {
+    const { name, phone, email, specialties } = request.body as any;
+
+    if (!name || !phone || !specialties || !Array.isArray(specialties)) {
+      return { success: false, error: 'Missing required fields: name, phone, specialties (array)' };
+    }
+
+    try {
+      const id = await createTechnician({ name, phone, email, specialties });
+      return { success: true, technician_id: id, message: 'Technician created' };
+    } catch (error) {
+      console.error('Create technician error:', error);
+      return { success: false, error: 'Failed to create technician' };
+    }
+  });
+
   // ========== AGENTS API ==========
 
   // Get agent statuses
   app.get('/api/agents/status', async () => {
+    // Count active dispatches
+    const pendingDispatches = await dbGet(`
+      SELECT COUNT(*) as count FROM appointments 
+      WHERE status IN ('pending_assignment', 'assigned') 
+      AND scheduled_date >= date('now')
+    `);
+
     return {
       agents: [
         { id: 'intake', name: 'Intake Agent', status: 'active', load: Math.floor(Math.random() * 50), llm: true },
         { id: 'scheduling', name: 'Scheduling Agent', status: 'active', load: Math.floor(Math.random() * 30), llm: true },
-        { id: 'dispatch', name: 'Dispatch Agent', status: 'standby', load: 0, llm: false },
+        { id: 'dispatch', name: 'Dispatch Agent', status: 'active', load: (pendingDispatches as any)?.count || 0, llm: false },
         { id: 'followup', name: 'Follow-Up Agent', status: 'standby', load: 0, llm: false },
         { id: 'review', name: 'Review Request Agent', status: 'standby', load: 0, llm: false },
       ],

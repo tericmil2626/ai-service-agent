@@ -98,11 +98,27 @@ export class SchedulingAgent {
     const result = await this.handleTimeSelection(message);
     
     if (result.confirmed) {
+      // Build full appointment data for dispatch handoff
+      const dispatchData = {
+        appointment_id: result.appointment!.id,
+        job_id: this.data!.job_id,
+        customer_id: this.data!.customer_id,
+        customer_name: this.data!.name,
+        customer_phone: this.data!.phone,
+        address: this.data!.address,
+        service_type: this.data!.service_type,
+        problem_description: this.data!.problem_description,
+        urgency: this.data!.urgency,
+        scheduled_date: result.appointment!.date,
+        scheduled_time: result.appointment!.time,
+        status: 'pending_assignment' as const,
+      };
+
       return {
         response: result.response,
         isComplete: true,
         handoffTo: 'Dispatch Agent',
-        data: { appointment: result.appointment },
+        data: { appointment: dispatchData },
       };
     } else {
       // Couldn't parse the selection, still need a time

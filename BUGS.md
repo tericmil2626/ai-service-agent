@@ -40,17 +40,27 @@ If SignalWire enables native integration, we can switch back to SWML for cleaner
 
 ---
 
-### Issue 2: Server Memory Constraints
-**Status:** Ongoing
+### Issue 2: Server Memory Constraints / Deployment
+**Status:** Fixed (2026-04-01)
 
 **Problem:**
 DigitalOcean droplet (1GB RAM) cannot compile TypeScript (`npm run build`). Process OOMs with "JavaScript heap out of memory" error.
 
-**Workaround:**
-Build locally, rsync compiled `dist/` folder to server.
+**Solution:**
+- Upgraded to 2GB RAM droplet ($6/month)
+- Implemented GitHub Actions auto-deploy (builds on GitHub's servers, no OOM)
+- Fixed SSH key auth (was corrupted during console paste)
+- GitHub Actions workflow uses `webfactory/ssh-agent` for key-based auth
 
-**Long-term Fix:**
-Consider upgrading to 2GB RAM droplet ($6/month) or using GitHub Actions for CI/CD builds.
+**Current Deploy Flow:**
+```
+git push origin main → GitHub Actions builds → SSH to DO → SCP dist/ → PM2 restart
+```
+
+**Secrets Required:**
+- `DO_HOST`: 45.55.60.22
+- `DO_USER`: root  
+- `DO_SSH_KEY`: Private key (multi-line format)
 
 ---
 
@@ -171,29 +181,24 @@ AUDIO_CACHE_DIR=/opt/service-business/audio-cache
 ---
 
 ### Issue 6: Claude Code (ACP) Integration Not Working
-**Status:** Configuration Issue - Needs Setup
+**Status:** Superseded - Using Skill Approach Instead (2026-03-31)
 
 **Problem:**
 Claude Code spawning via ACP runtime fails with "acpx exited with code 1".
 
-**What Was Tried:**
-1. ✅ Enabled ACPX plugin: `openclaw plugins enable acpx`
-2. ✅ Installed Claude Code CLI: `npm install -g @anthropics/claude-code` (v2.1.81)
-3. ✅ ACPX binary is at: `~/.npm-global/lib/node_modules/openclaw/dist/extensions/acpx/node_modules/.bin/acpx`
-4. ✅ ACPX runtime backend registers successfully in logs
-5. ❌ Agent spawning fails - `agents_list` only shows "main", not "claude-code"
+**Solution:**
+Instead of ACP integration, we built a **Claude Code Skill** directly into OpenClaw:
+- Adapted Claude Code's architecture (from leaked GitHub repo) into an OpenClaw skill
+- 2,751 lines of TypeScript
+- Commands: `/claude-code agent`, `/claude-code plan`, `/claude-code skills`, `/claude-code skillify`
+- Tool system, permission model, 6 agent types
 
-**Root Cause:**
-The ACPX plugin is enabled and finding the binary, but the agent spawning mechanism isn't properly configured. The `agentId: "claude-code"` isn't recognized in the allowlist.
+**Location:** `~/.openclaw/workspace/skills/claude-code/`
 
-**Possible Fixes:**
-- Check if agents need explicit registration in OpenClaw config
-- Verify acpx spawn command syntax matches what OpenClaw expects
-- Check if PATH needs to include claude-code binary for acpx to find it
-- May need to configure `plugins.acpx.agents` or similar
-
-**Workaround:**
-Continue working without Claude Code delegation - handle tasks directly.
+**Why this is better:**
+- No external ACP dependency
+- Direct integration with OpenClaw's tool system
+- Can spawn sub-agents with specific types (coder, reviewer, researcher, etc.)
 
 ---
 
@@ -236,4 +241,4 @@ sudo -u postgres psql -d openclaw_memory -c "GRANT ALL ON SCHEMA public TO theod
 
 ---
 
-*Last updated: 2026-03-30*
+*Last updated: 2026-04-01*

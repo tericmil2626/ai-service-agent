@@ -8,8 +8,10 @@ const cors_1 = __importDefault(require("@fastify/cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const IntakeAgent_js_1 = require("./agents/IntakeAgent.js");
 const SchedulingAgent_js_1 = require("./agents/SchedulingAgent.js");
+const DispatchAgent_js_1 = require("./agents/DispatchAgent.js");
 const database_js_1 = require("./database.js");
 const sms_js_1 = require("./sms.js");
+const calendar_js_1 = require("./calendar.js");
 dotenv_1.default.config();
 const app = (0, fastify_1.default)({
     logger: true,
@@ -284,6 +286,89 @@ async function startServer() {
         await (0, database_js_1.dbRun)(`UPDATE appointments SET ${updates.join(', ')} WHERE id = ?`, values);
         return { success: true, message: 'Appointment updated' };
     });
+    // ========== GOOGLE CALENDAR API ==========
+    // Get Google Calendar auth URL
+    app.get('/api/calendar/auth', async () => {
+        const calendarService = (0, calendar_js_1.getCalendarService)();
+        await calendarService.initialize();
+        const authUrl = calendarService.getAuthUrl();
+        return { auth_url: authUrl };
+    });
+    // Exchange OAuth code for token
+    app.post('/api/calendar/auth/callback', async (request) => {
+        const { code } = request.body;
+        const calendarService = (0, calendar_js_1.getCalendarService)();
+        const success = await calendarService.exchangeCode(code);
+        return { success, message: success ? 'Authentication successful' : 'Authentication failed' };
+    });
+    // Check calendar status
+    app.get('/api/calendar/status', async () => {
+        const calendarService = (0, calendar_js_1.getCalendarService)();
+        const initialized = calendarService.isInitialized();
+        return { initialized, message: initialized ? 'Connected' : 'Not connected' };
+    });
+    // ========== DISPATCH API ==========
+    // Dispatch an appointment to a technician
+    app.post('/api/dispatch/:appointmentId', async (request) => {
+        const { appointmentId } = request.params;
+        // Get appointment details
+        const appointment = await (0, database_js_1.dbGet)(`
+      SELECT 
+        a.id as appointment_id,
+        a.job_id,
+        a.scheduled_date,
+        a.scheduled_time,
+        j.customer_id,
+        j.service_type,
+        j.description as problem_description,
+        j.urgency,
+        c.name as customer_name,
+        c.phone as customer_phone,
+        c.address
+      FROM appointments a
+      JOIN jobs j ON a.job_id = j.id
+      JOIN customers c ON j.customer_id = c.id
+      WHERE a.id = ?
+    `, [appointmentId]);
+        if (!appointment) {
+            return { success: false, error: 'Appointment not found' };
+        }
+        // Create dispatch agent and assign
+        const dispatchAgent = new DispatchAgent_js_1.DispatchAgent();
+        const result = await dispatchAgent.receiveFromScheduling(appointment);
+        return {
+            success: result.assigned,
+            message: result.response,
+            technician: result.technician,
+        };
+    });
+    // Get dispatch status for an appointment
+    app.get('/api/dispatch/:appointmentId', async (request) => {
+        const { appointmentId } = request.params;
+        const dispatch = await (0, database_js_1.dbGet)(`
+      SELECT 
+        a.id as appointment_id,
+        a.status,
+        a.scheduled_date,
+        a.scheduled_time,
+        t.id as technician_id,
+        t.name as technician_name,
+        t.phone as technician_phone,
+        c.name as customer_name,
+        c.address,
+        j.service_type,
+        j.urgency
+      FROM appointments a
+      JOIN jobs j ON a.job_id = j.id
+      JOIN customers c ON j.customer_id = c.id
+      LEFT JOIN technicians t ON a.technician_id = t.id
+      WHERE a.id = ?
+    `, [appointmentId]);
+        if (!dispatch) {
+            return { success: false, error: 'Appointment not found' };
+        }
+        return { success: true, dispatch };
+    });
     // ========== TECHNICIANS API ==========
     // Get all technicians
     app.get('/api/technicians', async () => {
@@ -296,14 +381,35 @@ async function startServer() {
     `);
         return { technicians };
     });
+    // Create new technician
+    app.post('/api/technicians', async (request) => {
+        const { name, phone, email, specialties } = request.body;
+        if (!name || !phone || !specialties || !Array.isArray(specialties)) {
+            return { success: false, error: 'Missing required fields: name, phone, specialties (array)' };
+        }
+        try {
+            const id = await (0, DispatchAgent_js_1.createTechnician)({ name, phone, email, specialties });
+            return { success: true, technician_id: id, message: 'Technician created' };
+        }
+        catch (error) {
+            console.error('Create technician error:', error);
+            return { success: false, error: 'Failed to create technician' };
+        }
+    });
     // ========== AGENTS API ==========
     // Get agent statuses
     app.get('/api/agents/status', async () => {
+        // Count active dispatches
+        const pendingDispatches = await (0, database_js_1.dbGet)(`
+      SELECT COUNT(*) as count FROM appointments 
+      WHERE status IN ('pending_assignment', 'assigned') 
+      AND scheduled_date >= date('now')
+    `);
         return {
             agents: [
                 { id: 'intake', name: 'Intake Agent', status: 'active', load: Math.floor(Math.random() * 50), llm: true },
                 { id: 'scheduling', name: 'Scheduling Agent', status: 'active', load: Math.floor(Math.random() * 30), llm: true },
-                { id: 'dispatch', name: 'Dispatch Agent', status: 'standby', load: 0, llm: false },
+                { id: 'dispatch', name: 'Dispatch Agent', status: 'active', load: pendingDispatches?.count || 0, llm: false },
                 { id: 'followup', name: 'Follow-Up Agent', status: 'standby', load: 0, llm: false },
                 { id: 'review', name: 'Review Request Agent', status: 'standby', load: 0, llm: false },
             ],

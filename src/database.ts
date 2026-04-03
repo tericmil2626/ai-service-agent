@@ -117,6 +117,7 @@ async function initSchema(database: sqlite3.Database): Promise<void> {
       notes TEXT,
       status TEXT DEFAULT 'confirmed',
       reminder_sent INTEGER DEFAULT 0,
+      calendar_event_id TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (job_id) REFERENCES jobs(id)
