@@ -44,4 +44,24 @@ jobs:
         DO_HOST: ${{ secrets.DO_HOST }}
         DO_USER: ${{ secrets.DO_USER }}
       run: |
-        ssh $DO_USER@$DO_HOST "cd /opt/service-business && pm2 reload service-business-api --update-env || pm2 start dist/api.js --name service-business-api"
+        ssh $DO_USER@$DO_HOST '
+          # Set PATH for PM2 and Node
+          export PATH="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -1)/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+          
+          cd /opt/service-business || exit 1
+          
+          # Check if PM2 process exists
+          if pm2 describe service-business-api > /dev/null 2>&1; then
+            echo "Reloading existing PM2 process..."
+            pm2 reload service-business-api --update-env
+          else
+            echo "Starting new PM2 process..."
+            pm2 start dist/api.js --name service-business-api
+          fi
+          
+          # Save config
+          pm2 save
+          
+          # Show status
+          pm2 status
+        '
