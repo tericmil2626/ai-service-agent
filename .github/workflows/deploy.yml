@@ -40,7 +40,8 @@ jobs:
       run: |
         # Create data directory and client_secret.json on server
         ssh $DO_USER@$DO_HOST 'mkdir -p /root/service-business/data'
-        echo "$GCAL_CLIENT_SECRET" | ssh $DO_USER@$DO_HOST 'cat > /root/service-business/data/client_secret.json'
+        ssh $DO_USER@$DO_HOST "echo '$GCAL_CLIENT_SECRET' > /root/service-business/data/client_secret.json"
+        ssh $DO_USER@$DO_HOST 'chmod 600 /root/service-business/data/client_secret.json'
         
         # Copy files to server (correct path: /root/service-business/)
         scp -r dist/* $DO_USER@$DO_HOST:/root/service-business/dist/
