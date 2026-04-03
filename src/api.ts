@@ -359,6 +359,7 @@ async function startServer() {
   app.post('/api/calendar/auth/callback', async (request) => {
     const { code } = request.body as any;
     const calendarService = getCalendarService();
+    await calendarService.initialize();
     const success = await calendarService.exchangeCode(code);
     return { success, message: success ? 'Authentication successful' : 'Authentication failed' };
   });

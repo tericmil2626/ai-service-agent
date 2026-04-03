@@ -7,10 +7,9 @@ exports.getCalendarService = getCalendarService;
 const googleapis_1 = require("googleapis");
 const google_auth_library_1 = require("google-auth-library");
 const fs_1 = require("fs");
-const path_1 = require("path");
-// Path to OAuth credentials
-const CREDENTIALS_PATH = (0, path_1.join)(process.cwd(), 'data', 'client_secret.json');
-const TOKEN_PATH = (0, path_1.join)(process.cwd(), 'data', 'gcal_token.json');
+// Path to OAuth credentials - use absolute path
+const CREDENTIALS_PATH = '/root/service-business/data/client_secret.json';
+const TOKEN_PATH = '/root/service-business/data/gcal_token.json';
 class GoogleCalendarService {
     auth = null;
     calendar = null;
@@ -36,16 +35,16 @@ class GoogleCalendarService {
                 const token = JSON.parse((0, fs_1.readFileSync)(TOKEN_PATH, 'utf8'));
                 this.auth.setCredentials(token);
                 console.log('[GCal] Loaded existing token');
+                this.initialized = true;
             }
             else {
                 console.log('[GCal] No token found. Authentication required.');
-                console.log('[GCal] Visit:', this.getAuthUrl());
-                return false;
             }
-            // Create Calendar API client
-            this.calendar = googleapis_1.google.calendar({ version: 'v3', auth: this.auth });
-            this.initialized = true;
-            console.log('[GCal] Initialized successfully');
+            // Create Calendar API client only if we have a token
+            if ((0, fs_1.existsSync)(TOKEN_PATH)) {
+                this.calendar = googleapis_1.google.calendar({ version: 'v3', auth: this.auth });
+                console.log('[GCal] Initialized successfully');
+            }
             return true;
         }
         catch (error) {

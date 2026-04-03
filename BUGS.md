@@ -241,4 +241,39 @@ sudo -u postgres psql -d openclaw_memory -c "GRANT ALL ON SCHEMA public TO theod
 
 ---
 
-*Last updated: 2026-04-01*
+---
+
+### Issue 8: Server Build Memory Issues (2GB RAM Insufficient)
+**Status:** Ongoing - 2026-04-02
+
+**Problem:**
+DigitalOcean droplet with 2GB RAM still cannot compile TypeScript (`npm run build`). Process crashes with:
+```
+<--- Last few GCs --->
+[206547:0x5d84f50]    27472 ms: Mark-Compact 1006.3 (1041.0) -> 1004.6 (1043.0) MB
+[206547:0x5d84f50]    27506 ms: Mark-Compact 1008.3 (1043.0) -> 1006.6 (1044.0) MB
+<--- JS stacktrace --->
+FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+```
+
+**Root Cause:**
+TypeScript compiler + Google APIs library + all dependencies exceed 2GB RAM during compilation.
+
+**Solution:**
+Use **GitHub Actions** for builds (worked successfully 2026-04-01):
+1. GitHub Actions builds on GitHub's servers (no memory limit)
+2. SCP `dist/` folder to server
+3. PM2 restart
+
+**Important:** Do NOT build on the server — always use GitHub Actions workflow.
+
+**Current Deploy Process:**
+```
+git push origin main → GitHub Actions builds → SCP dist/ → PM2 restart
+```
+
+**Note:** Even with `NODE_OPTIONS="--max-old-space-size=512"`, server-side build still fails. GitHub Actions is the only viable method.
+
+---
+
+*Last updated: 2026-04-02*
