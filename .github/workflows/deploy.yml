@@ -37,7 +37,9 @@ jobs:
         DO_HOST: ${{ secrets.DO_HOST }}
         DO_USER: ${{ secrets.DO_USER }}
       run: |
-        scp -r dist/* $DO_USER@$DO_HOST:/opt/service-business/dist/
+        # Copy files to server (correct path: /root/service-business/)
+        scp -r dist/* $DO_USER@$DO_HOST:/root/service-business/dist/
+        scp package.json package-lock.json $DO_USER@$DO_HOST:/root/service-business/
         
     - name: Restart service
       env:
@@ -48,16 +50,16 @@ jobs:
           # Set PATH for PM2 and Node
           export PATH="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -1)/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
           
-          cd /opt/service-business || exit 1
+          cd /root/service-business || exit 1
           
-          # Check if PM2 process exists
-          if pm2 describe service-business-api > /dev/null 2>&1; then
-            echo "Reloading existing PM2 process..."
-            pm2 reload service-business-api --update-env
-          else
-            echo "Starting new PM2 process..."
-            pm2 start dist/api.js --name service-business-api
-          fi
+          # Install production dependencies
+          npm ci --production
+          
+          # Delete existing process if it exists (ignore errors)
+          pm2 delete service-business-api 2>/dev/null || true
+          
+          # Start fresh (entry point is dist/src/api.js)
+          pm2 start dist/src/api.js --name service-business-api
           
           # Save config
           pm2 save
