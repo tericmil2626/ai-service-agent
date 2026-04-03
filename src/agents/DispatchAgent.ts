@@ -351,7 +351,7 @@ Reply YES to confirm or NO to decline.`;
       const nextTech = this.availableTechnicians[currentTechIndex + 1];
       
       if (nextTech) {
-        await this.assignTechnicianToAppointment(nextTech.id);
+        await this.assignTechnicianToAppointment(nextTech.id, nextTech);
         this.data.assigned_technician_id = nextTech.id;
         this.data.status = 'assigned';
         await this.updateAppointmentStatus('assigned');
