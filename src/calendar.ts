@@ -51,17 +51,17 @@ export class GoogleCalendarService {
         const token = JSON.parse(readFileSync(TOKEN_PATH, 'utf8'));
         this.auth.setCredentials(token);
         console.log('[GCal] Loaded existing token');
+        this.initialized = true;
       } else {
         console.log('[GCal] No token found. Authentication required.');
-        console.log('[GCal] Visit:', this.getAuthUrl());
-        return false;
       }
 
-      // Create Calendar API client
-      this.calendar = google.calendar({ version: 'v3', auth: this.auth });
-      this.initialized = true;
+      // Create Calendar API client only if we have a token
+      if (existsSync(TOKEN_PATH)) {
+        this.calendar = google.calendar({ version: 'v3', auth: this.auth });
+        console.log('[GCal] Initialized successfully');
+      }
       
-      console.log('[GCal] Initialized successfully');
       return true;
     } catch (error) {
       console.error('[GCal] Initialization failed:', error);
