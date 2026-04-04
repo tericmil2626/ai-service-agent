@@ -367,6 +367,7 @@ async function startServer() {
   // Check calendar status
   app.get('/api/calendar/status', async () => {
     const calendarService = getCalendarService();
+    await calendarService.initialize();
     const initialized = calendarService.isInitialized();
     return { initialized, message: initialized ? 'Connected' : 'Not connected' };
   });
