@@ -399,6 +399,15 @@ async function startServer() {
     return { success: true, stats };
   });
 
+  // ========== LLM STATS API ==========
+
+  // Get LLM token usage stats
+  app.get('/api/llm/stats', async () => {
+    const { getLLMStats } = await import('./llm-enhanced.js');
+    const stats = getLLMStats();
+    return { success: true, stats };
+  });
+
   // ========== DISPATCH API ==========
 
   // Dispatch an appointment to a technician
