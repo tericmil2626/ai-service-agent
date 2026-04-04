@@ -372,6 +372,33 @@ async function startServer() {
     return { initialized, message: initialized ? 'Connected' : 'Not connected' };
   });
 
+  // ========== FOLLOW-UP API ==========
+
+  // Trigger follow-up processing (for cron job)
+  app.post('/api/followup/process', async () => {
+    const { FollowUpAgent, createFeedbackTable } = await import('./agents/FollowUpAgent.js');
+    
+    // Ensure feedback table exists
+    await createFeedbackTable();
+    
+    const followUpAgent = new FollowUpAgent();
+    const results = await followUpAgent.processReminders();
+    
+    return {
+      success: true,
+      remindersSent: results.remindersSent,
+      followUpsSent: results.followUpsSent,
+    };
+  });
+
+  // Get follow-up stats
+  app.get('/api/followup/stats', async () => {
+    const { FollowUpAgent } = await import('./agents/FollowUpAgent.js');
+    const followUpAgent = new FollowUpAgent();
+    const stats = await followUpAgent.getStats();
+    return { success: true, stats };
+  });
+
   // ========== DISPATCH API ==========
 
   // Dispatch an appointment to a technician

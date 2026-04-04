@@ -117,6 +117,10 @@ async function initSchema(database: sqlite3.Database): Promise<void> {
       notes TEXT,
       status TEXT DEFAULT 'confirmed',
       reminder_sent INTEGER DEFAULT 0,
+      reminder_sent_24h INTEGER DEFAULT 0,
+      reminder_sent_2h INTEGER DEFAULT 0,
+      missed_handled INTEGER DEFAULT 0,
+      follow_up_sent INTEGER DEFAULT 0,
       calendar_event_id TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -152,6 +156,20 @@ async function initSchema(database: sqlite3.Database): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_conversations_job ON conversations(job_id);
   `);
+
+  // Migration: Add new columns to appointments table for Follow-Up Agent
+  try {
+    await runAsync(database, `ALTER TABLE appointments ADD COLUMN reminder_sent_24h INTEGER DEFAULT 0`);
+  } catch (e) { /* Column may already exist */ }
+  try {
+    await runAsync(database, `ALTER TABLE appointments ADD COLUMN reminder_sent_2h INTEGER DEFAULT 0`);
+  } catch (e) { /* Column may already exist */ }
+  try {
+    await runAsync(database, `ALTER TABLE appointments ADD COLUMN missed_handled INTEGER DEFAULT 0`);
+  } catch (e) { /* Column may already exist */ }
+  try {
+    await runAsync(database, `ALTER TABLE appointments ADD COLUMN follow_up_sent INTEGER DEFAULT 0`);
+  } catch (e) { /* Column may already exist */ }
 }
 
 // Customer operations
