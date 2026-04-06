@@ -210,17 +210,21 @@ async function callOpenAI(
     throw new Error(`OpenAI API error: ${response.status} ${await response.text()}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    model?: string;
+  };
   
   return {
-    content: data.choices[0]?.message?.content || '',
+    content: data.choices?.[0]?.message?.content || '',
     usage: {
       input: data.usage?.prompt_tokens || 0,
       output: data.usage?.completion_tokens || 0,
       total: data.usage?.total_tokens || 0,
     },
-    model: data.model,
-    finishReason: data.choices[0]?.finish_reason,
+    model: data.model || '',
+    finishReason: data.choices?.[0]?.finish_reason,
   };
 }
 
@@ -259,17 +263,21 @@ async function callMoonshot(
     throw new Error(`Moonshot API error: ${response.status} ${await response.text()}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    model?: string;
+  };
   
   return {
-    content: data.choices[0]?.message?.content || '',
+    content: data.choices?.[0]?.message?.content || '',
     usage: {
       input: data.usage?.prompt_tokens || 0,
       output: data.usage?.completion_tokens || 0,
       total: data.usage?.total_tokens || 0,
     },
-    model: data.model,
-    finishReason: data.choices[0]?.finish_reason,
+    model: data.model || '',
+    finishReason: data.choices?.[0]?.finish_reason,
   };
 }
 
