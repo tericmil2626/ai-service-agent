@@ -314,7 +314,9 @@ async function callGemini(
     throw new Error(`Gemini API error: ${response.status} ${await response.text()}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
   const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
   const estimatedOutput = Math.ceil(content.length / 4);
   
