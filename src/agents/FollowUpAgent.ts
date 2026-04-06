@@ -301,7 +301,7 @@ Your feedback helps us improve!`;
     if (lowerMsg.includes('yes') || lowerMsg === 'y') {
       if (appointmentId) {
         await dbRun(
-          'UPDATE appointments SET status = 'confirmed', updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          "UPDATE appointments SET status = 'confirmed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
           [appointmentId]
         );
         return 'Thank you for confirming! We look forward to seeing you.';
