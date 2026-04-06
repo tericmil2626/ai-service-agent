@@ -252,13 +252,13 @@ Would you like to reschedule? Reply with:
     
     // Update appointment status
     await dbRun(
-      'UPDATE appointments SET status = 'missed', missed_handled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      "UPDATE appointments SET status = 'missed', missed_handled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
       [appt.appointment_id]
     );
 
     // Update job status
     await dbRun(
-      'UPDATE jobs SET status = 'missed_appointment' WHERE id = ?',
+      "UPDATE jobs SET status = 'missed_appointment' WHERE id = ?",
       [appt.job_id]
     );
 
@@ -318,11 +318,11 @@ Your feedback helps us improve!`;
     if (lowerMsg.includes('cancel')) {
       if (appointmentId) {
         await dbRun(
-          'UPDATE appointments SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          "UPDATE appointments SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
           [appointmentId]
         );
         await dbRun(
-          'UPDATE jobs SET status = 'cancelled' WHERE id = (SELECT job_id FROM appointments WHERE id = ?)',
+          "UPDATE jobs SET status = 'cancelled' WHERE id = (SELECT job_id FROM appointments WHERE id = ?)",
           [appointmentId]
         );
       }
