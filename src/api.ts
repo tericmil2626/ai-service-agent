@@ -399,6 +399,43 @@ async function startServer() {
     return { success: true, stats };
   });
 
+  // ========== REVIEW REQUEST API ==========
+
+  // Trigger review request processing (for cron job)
+  app.post('/api/reviews/process', async () => {
+    const { ReviewRequestAgent, addReviewColumns } = await import('./agents/ReviewRequestAgent.js');
+    
+    // Ensure columns exist
+    await addReviewColumns();
+    
+    const reviewAgent = new ReviewRequestAgent();
+    const results = await reviewAgent.processReviewRequests();
+    
+    return {
+      success: true,
+      requestsSent: results.requestsSent,
+      reviewsReceived: results.reviewsReceived,
+      remindersSent: results.remindersSent,
+    };
+  });
+
+  // Get review stats
+  app.get('/api/reviews/stats', async () => {
+    const { ReviewRequestAgent } = await import('./agents/ReviewRequestAgent.js');
+    const reviewAgent = new ReviewRequestAgent();
+    const stats = await reviewAgent.getStats();
+    return { success: true, stats };
+  });
+
+  // Manually send review request
+  app.post('/api/reviews/send/:appointmentId', async (request) => {
+    const { appointmentId } = request.params as any;
+    const { ReviewRequestAgent } = await import('./agents/ReviewRequestAgent.js');
+    const reviewAgent = new ReviewRequestAgent();
+    const success = await reviewAgent.sendManualRequest(parseInt(appointmentId));
+    return { success, message: success ? 'Review request sent' : 'Failed to send review request' };
+  });
+
   // ========== LLM STATS API ==========
 
   // Get LLM token usage stats
