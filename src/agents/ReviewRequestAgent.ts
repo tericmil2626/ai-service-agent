@@ -331,9 +331,15 @@ Thanks for your business!`;
 
 // Database migration helper
 export async function addReviewColumns(): Promise<void> {
+  // Add completed_date column (needed to track when jobs are done)
+  await dbRun(`
+    ALTER TABLE appointments ADD COLUMN completed_date DATETIME
+  `).catch(() => {}); // Column may already exist
+  
+  // Add review tracking columns
   await dbRun(`
     ALTER TABLE appointments ADD COLUMN review_request_count INTEGER DEFAULT 0
-  `).catch(() => {}); // Column may already exist
+  `).catch(() => {});
   
   await dbRun(`
     ALTER TABLE appointments ADD COLUMN last_review_request_date DATETIME
