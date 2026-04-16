@@ -7,6 +7,8 @@ import { DispatchAgent, getAllTechnicians, createTechnician } from './agents/Dis
 import { getDb, dbGet, dbAll, dbRun } from './database.js';
 import { getSMSProvider } from './sms.js';
 import { getCalendarService } from './calendar.js';
+import { VoiceAgent } from './voice-agent.js';
+import { ServiceBusinessOrchestrator } from './orchestrator-v2.js';
 
 dotenv.config();
 
@@ -598,25 +600,14 @@ async function startServer() {
   });
 
   // ========== VOICE WEBHOOK ENDPOINTS ==========
+  // Initialize VoiceAgent with orchestrator
+  const voiceOrchestrator = new ServiceBusinessOrchestrator();
+  const voiceAgent = new VoiceAgent(voiceOrchestrator);
 
   // Handle incoming voice call
   app.post('/webhook/voice', async (request, reply) => {
     const { CallSid, From, To } = request.body as any;
-
-    console.log(`[Voice] Incoming call from ${From} to ${To}, CallSid: ${CallSid}`);
-
-    const businessName = process.env.BUSINESS_NAME || 'Theo';
-    const greeting = `Hello! Thank you for calling ${businessName}. I am your AI assistant and I can help you schedule service. What type of service do you need?`;
-
-    const laml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="speech" action="/webhook/voice/gather" method="POST" timeout="5" speechTimeout="auto" language="en-US">
-    <Say voice="Polly.Joanna">${greeting.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
-  </Gather>
-  <Say voice="Polly.Joanna">I did not hear anything. Please call back anytime. Goodbye!</Say>
-  <Hangup/>
-</Response>`;
-
+    const laml = await voiceAgent.handleIncomingCall({ callSid: CallSid, from: From, to: To });
     reply.type('text/xml');
     return laml;
   });
@@ -624,42 +615,15 @@ async function startServer() {
   // Handle speech input from caller
   app.post('/webhook/voice/gather', async (request, reply) => {
     const { CallSid, From, SpeechResult, Confidence } = request.body as any;
-
-    console.log(`[Voice] Speech from ${CallSid}: "${SpeechResult}" (confidence: ${Confidence})`);
-
-    let response = `I heard you say: ${SpeechResult}. `;
-
-    // Simple intent detection
-    const lower = (SpeechResult || '').toLowerCase();
-    if (lower.includes('ac') || lower.includes('air') || lower.includes('cool')) {
-      response += 'I can help you schedule AC service. What day works for you?';
-    } else if (lower.includes('heat') || lower.includes('furnace')) {
-      response += 'I can help you schedule heating service. What day works for you?';
-    } else if (lower.includes('schedule') || lower.includes('appointment')) {
-      response += 'I can schedule that for you. What day and time would you prefer?';
-    } else {
-      response += 'I can help schedule a technician for you. What day works best?';
-    }
-
-    const laml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="speech" action="/webhook/voice/gather" method="POST" timeout="5" speechTimeout="auto" language="en-US">
-    <Say voice="Polly.Joanna">${response.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Say>
-  </Gather>
-  <Say voice="Polly.Joanna">Thank you for calling. We will follow up with you shortly. Goodbye!</Say>
-  <Hangup/>
-</Response>`;
-
+    const laml = await voiceAgent.handleSpeechInput({ callSid: CallSid, speechResult: SpeechResult, from: From, confidence: Confidence });
     reply.type('text/xml');
     return laml;
   });
 
   // Handle call status updates
   app.post('/webhook/voice/status', async (request, reply) => {
-    const { CallSid, CallStatus, CallDuration } = request.body as any;
-
-    console.log(`[Voice] Call ${CallSid} status: ${CallStatus}, duration: ${CallDuration}`);
-
+    const { CallSid, CallStatus, CallDuration, From, To, RecordingUrl } = request.body as any;
+    await voiceAgent.handleCallStatus({ callSid: CallSid, callStatus: CallStatus, callDuration: CallDuration, from: From, to: To, recordingUrl: RecordingUrl });
     reply.type('text/xml');
     return '<?xml version="1.0" encoding="UTF-8"?><Response/>';
   });
