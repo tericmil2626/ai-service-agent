@@ -48,6 +48,19 @@ async function startServer() {
         agentSessions.set(From, session);
       }
 
+      // If we're already in scheduling mode, handle scheduling
+      if (session.scheduling && session.intake.getState().status === 'complete') {
+        const result = await session.scheduling.handleTimeSelection(Body);
+
+        // Send confirmation SMS if appointment was booked
+        if (result.confirmed && result.appointment) {
+          await sms.sendSMS(From, result.response);
+        }
+
+        reply.type('text/xml');
+        return sms.sendTwiMLResponse(result.response);
+      }
+
       // Process through intake agent
       const result = await session.intake.handleMessage(Body, From);
 

@@ -322,4 +322,9 @@ export class IntakeAgent {
       lead_status: 'qualified',
     };
   }
+
+  // Public method to check current state
+  getState(): IntakeData {
+    return this.data;
+  }
 }
