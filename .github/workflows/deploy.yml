@@ -68,8 +68,8 @@ jobs:
           # Wait a moment
           sleep 2
           
-          # Start fresh (entry point is dist/src/api.js)
-          pm2 start dist/src/api.js --name service-business-api
+          # Start fresh (entry point is dist/api-v2.js)
+          pm2 start dist/api-v2.js --name service-business-api
           
           # Save config
           pm2 save
