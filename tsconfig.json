@@ -16,5 +16,5 @@
     "sourceMap": true
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist", "agents/ReceptionistAgent.ts", "agents/LeadQualificationAgent.ts", "api.ts", "orchestrator-old.ts", "test-llm-old.ts", "test-technicians.ts", "dashboard"]
+  "exclude": ["node_modules", "dist", "agents/ReceptionistAgent.ts", "agents/LeadQualificationAgent.ts", "api.ts", "orchestrator-old.ts", "test-llm-old.ts", "test-technicians.ts", "dashboard", "src/api.ts", "src/voice-agent.ts"]
 }
