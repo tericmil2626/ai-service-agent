@@ -1,4 +1,4 @@
-import { getDb, updateJobStatus, saveMessage } from './database';
+import { updateJobStatus, saveMessage, getDb } from './database';
 import { AgentLoader } from './core/AgentLoader';
 import { ConversationStateManager } from './core/StateManager';
 import {
@@ -155,16 +155,7 @@ export class ServiceBusinessOrchestrator {
       };
     }
 
-    // Update state based on response
     await this.updateStateFromResponse(customerPhone, state, response);
-
-    // If customer was just created, save state again to ensure it's persisted
-    const db = await getDb();
-    const customerCheck = await db.get('SELECT id FROM customers WHERE phone = ?', customerPhone);
-    if (customerCheck && !state.customerId) {
-      state.customerId = customerCheck.id;
-      await this.stateManager.saveState(customerPhone, state);
-    }
 
     return {
       response: response.response,
@@ -214,22 +205,12 @@ export class ServiceBusinessOrchestrator {
         };
       }
 
-      // Transition to scheduling
+      // Transition to scheduling — store intake data for scheduling agent to consume on first call
       state.status = 'scheduling';
       state.currentAgent = 'scheduling';
-
-      // Initialize scheduling agent with intake data
-      const schedulingAgent = this.agentLoader.getAgent('scheduling');
-      console.log('[Orchestrator] Handoff to scheduling. Response data:', JSON.stringify(response.data));
-      if (schedulingAgent && response.data) {
-        if (schedulingAgent.initialize) {
-          await schedulingAgent.initialize(response.data);
-        }
-        state.context.schedulingData = response.data;
-        console.log('[Orchestrator] Set schedulingData:', JSON.stringify(state.context.schedulingData));
-      } else {
-        console.error('[Orchestrator] Missing scheduling agent or response data:', { hasAgent: !!schedulingAgent, hasData: !!response.data });
-      }
+      state.context.schedulingData = response.data;
+      state.context.schedulingState = undefined; // ensure fresh start for scheduling agent
+      console.log('[Orchestrator] Handoff to scheduling. schedulingData set:', JSON.stringify(response.data));
     }
 
     return response;
@@ -249,18 +230,16 @@ export class ServiceBusinessOrchestrator {
       };
     }
 
-    // Restore scheduling data if available
-    console.log('[Orchestrator] handleScheduling. schedulingData:', JSON.stringify(state.context.schedulingData));
-    if (state.context.schedulingData && schedulingAgent.initialize) {
-      console.log('[Orchestrator] Restoring schedulingData to agent');
+    console.log('[Orchestrator] handleScheduling. schedulingState exists:', !!state.context.schedulingState);
+    if (state.context.schedulingState && schedulingAgent.setState) {
+      // Resuming existing session — restore saved state only, do not re-initialize
+      schedulingAgent.setState(state.context.schedulingState);
+    } else if (state.context.schedulingData && schedulingAgent.initialize) {
+      // Fresh session — initialize with intake data
+      console.log('[Orchestrator] Initializing scheduling agent with schedulingData');
       await schedulingAgent.initialize(state.context.schedulingData);
     } else {
-      console.log('[Orchestrator] No schedulingData to restore');
-    }
-
-    // Restore agent state if available
-    if (state.context.schedulingState && schedulingAgent.setState) {
-      schedulingAgent.setState(state.context.schedulingState);
+      console.log('[Orchestrator] No schedulingData to initialize with');
     }
 
     const response = await schedulingAgent.handleMessage(message, context);
@@ -348,17 +327,16 @@ export class ServiceBusinessOrchestrator {
       };
     }
 
-    // Restore dispatch data if available
-    if (state.context.dispatchData && dispatchAgent.initialize) {
-      console.log('[Orchestrator] Restoring dispatch data:', JSON.stringify(state.context.dispatchData));
+    console.log('[Orchestrator] handleDispatch. dispatchState exists:', !!state.context.dispatchState);
+    if (state.context.dispatchState && dispatchAgent.setState) {
+      // Resuming existing session — restore saved state only, do not re-initialize
+      dispatchAgent.setState(state.context.dispatchState);
+    } else if (state.context.dispatchData && dispatchAgent.initialize) {
+      // Fresh session — initialize with appointment data
+      console.log('[Orchestrator] Initializing dispatch agent with dispatchData');
       await dispatchAgent.initialize(state.context.dispatchData);
     } else {
-      console.log('[Orchestrator] No dispatch data to restore. dispatchData:', state.context.dispatchData);
-    }
-
-    // Restore agent state if available
-    if (state.context.dispatchState && dispatchAgent.setState) {
-      dispatchAgent.setState(state.context.dispatchState);
+      console.log('[Orchestrator] No dispatchData to initialize with');
     }
 
     const response = await dispatchAgent.handleMessage(message, context);
@@ -405,14 +383,7 @@ export class ServiceBusinessOrchestrator {
     state: ConversationState,
     response: AgentResponse
   ): Promise<void> {
-    // Update state based on response
-    if (response.handoffTo) {
-      state.currentAgent = response.handoffTo.split(' ')[0].toLowerCase();
-    }
-
     state.lastMessageAt = new Date();
-
-    // Save state to database
     await this.stateManager.saveState(customerPhone, state);
   }
 
