@@ -78,88 +78,37 @@ async function startServer() {
 
   await app.register(formbody);
 
-  // Utility to add delay between SMS messages (prevents carrier filtering)
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-  const lastSMSTime = new Map<string, number>();
-  const MIN_SMS_INTERVAL = 3000; // Minimum 3 seconds between SMS to same number
-
   // SMS webhook
   app.post('/webhook/sms', async (request, reply) => {
     const rawBody = request.body as any;
     console.log('[SMS Webhook] Raw body:', JSON.stringify(rawBody));
     let { From, Body, MessageSid } = rawBody;
-    // Trim whitespace and ensure + prefix for consistent processing
     const originalFrom = From;
     From = From?.trim();
     if (From && !From.startsWith('+')) From = '+' + From;
     console.log('[SMS Webhook] Original From: ' + originalFrom + ', Processed From: ' + From + ', Body: ' + Body);
 
     try {
-      // First, check if this is a reply to a missed call text-back
-      console.log('[SMS Webhook] Checking for text-back reply...');
+      // Check if this is a reply to a missed call text-back first
       const textBackResult = await missedCallHandler.handleTextBackReply(From, Body, orchestrator);
-      console.log('[SMS Webhook] Text-back check result:', textBackResult.success, textBackResult.error || '');
-      
-      if (textBackResult.success) {
-        // It was a text-back reply, send SMS via API
-        console.log('[SMS Webhook] Text-back reply processed, sending SMS...');
-        
-        // Add delay if we've sent to this number recently (prevents carrier filtering)
-        const now = Date.now();
-        const lastSent = lastSMSTime.get(From) || 0;
-        const timeSinceLast = now - lastSent;
-        if (timeSinceLast < MIN_SMS_INTERVAL) {
-          const waitTime = MIN_SMS_INTERVAL - timeSinceLast;
-          console.log(`[SMS Webhook] Waiting ${waitTime}ms before sending to prevent carrier filtering...`);
-          await delay(waitTime);
-        }
-        
-        const { sendSMS } = await import('./signalwire-fetch.js');
-        const smsResult = await sendSMS(From, textBackResult.response || 'Thanks for your message!');
-        lastSMSTime.set(From, Date.now());
-        
-        if (smsResult.success) {
-          console.log('[SMS Webhook] Text-back SMS sent successfully:', smsResult.messageId);
-        } else {
-          console.error('[SMS Webhook] Failed to send text-back SMS:', smsResult.error);
-        }
-        reply.type('text/xml');
-        return '<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>';
-      }
-      
-      // Regular SMS flow
-      console.log('[SMS Webhook] Processing as regular SMS...');
-      const result = await orchestrator.processMessage({
-        customerPhone: From,
-        message: Body,
-        channel: 'sms',
-        timestamp: new Date(),
-        sessionId: MessageSid
-      });
-      console.log('[SMS Webhook] Orchestrator response:', result.response.substring(0, 50) + '...');
+      console.log('[SMS Webhook] Text-back check:', textBackResult.success, textBackResult.error || '');
 
-      // Send SMS response via SignalWire API (more reliable than TwiML for SMS)
-      // Add delay if we've sent to this number recently (prevents carrier filtering)
-      const now2 = Date.now();
-      const lastSent2 = lastSMSTime.get(From) || 0;
-      const timeSinceLast2 = now2 - lastSent2;
-      if (timeSinceLast2 < MIN_SMS_INTERVAL) {
-        const waitTime2 = MIN_SMS_INTERVAL - timeSinceLast2;
-        console.log(`[SMS Webhook] Waiting ${waitTime2}ms before sending to prevent carrier filtering...`);
-        await delay(waitTime2);
-      }
-      
-      const { sendSMS } = await import('./signalwire-fetch.js');
-      const smsResult = await sendSMS(From, result.response || 'Thanks for your message!');
-      lastSMSTime.set(From, Date.now());
-      
-      if (smsResult.success) {
-        console.log('[SMS Webhook] SMS sent successfully:', smsResult.messageId);
-      } else {
+      const responseText = textBackResult.success
+        ? textBackResult.response || 'Thanks for your message!'
+        : await orchestrator.processMessage({
+            customerPhone: From,
+            message: Body,
+            channel: 'sms',
+            timestamp: new Date(),
+            sessionId: MessageSid,
+          }).then(r => r.response);
+
+      console.log('[SMS Webhook] Sending response:', responseText.substring(0, 60) + '...');
+      const smsResult = await orchestrator.sendSMSResponse(From, responseText);
+      if (!smsResult.success) {
         console.error('[SMS Webhook] Failed to send SMS:', smsResult.error);
       }
 
-      // Return empty TwiML (we already sent the SMS)
       reply.type('text/xml');
       return '<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>';
     } catch (error) {
@@ -423,12 +372,7 @@ async function startServer() {
       return { success: false, error: 'No SMS provider configured', provider, env: { hasTwilio, hasSignalWire } };
     }
 
-    const { sendSMS } = await import('./signalwire-fetch.js');
-    const sendFn = hasTwilio
-      ? (await import('./twilio.js')).sendSMS
-      : sendSMS;
-
-    const result = await sendFn(to, testMessage);
+    const result = await orchestrator.sendSMSResponse(to, testMessage);
     console.log(`[Test SMS] Result:`, result);
 
     return { ...result, provider, to, message: testMessage };

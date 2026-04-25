@@ -9,7 +9,7 @@ import {
 } from './types/agents';
 import { getTierConfig, isAgentAvailable, isFeatureAvailable } from './config/tiers';
 import { sendSMS as sendTwilioSMS } from './twilio';
-import { sendSMS as sendSignalWireSMS } from './signalwire';
+import { sendSMS as sendSignalWireSMS } from './signalwire-fetch';
 import { createAppointmentEvent } from './google-calendar';
 
 interface OrchestratorResponse {
