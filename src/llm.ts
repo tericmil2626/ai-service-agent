@@ -234,7 +234,8 @@ async function callLLM(
   console.log(`[LLM] Base URL: ${baseUrl}`);
 
   // Moonshot Kimi models only accept temperature = 1
-  const temperature = provider === 'moonshot' ? 1 : (options.temperature ?? 0.7);
+  const envTemp = process.env.LLM_TEMPERATURE ? parseFloat(process.env.LLM_TEMPERATURE) : undefined;
+  const temperature = provider === 'moonshot' ? 1 : (options.temperature ?? envTemp ?? 0.3);
 
   const body: any = {
     model: model,
@@ -332,7 +333,7 @@ async function callGemini(
     body: JSON.stringify({
       contents,
       generationConfig: {
-        temperature: options.temperature ?? 0.7,
+        temperature: options.temperature ?? (process.env.LLM_TEMPERATURE ? parseFloat(process.env.LLM_TEMPERATURE) : 0.3),
         maxOutputTokens: options.maxTokens ?? 500,
       }
     }),
@@ -540,7 +541,7 @@ ${isUrgent ? '\nThis is an URGENT request - prioritize speed and reassurance.' :
     ...conversationHistory.map(h => ({ role: h.role, content: h.content })),
   ];
 
-  return generateText(messages, { temperature: 0.8, maxTokens: 150 });
+  return generateText(messages, { temperature: 0.6, maxTokens: 150 });
 }
 
 /**
@@ -604,7 +605,7 @@ ${slotText}`;
       { role: 'user', content: context },
     ],
     schema,
-    { temperature: 0.7 }
+    { temperature: 0.4 }
   );
 
   return result.response;
