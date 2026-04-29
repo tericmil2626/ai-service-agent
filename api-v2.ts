@@ -673,14 +673,15 @@ async function startServer() {
     return { authUrl: url, businessId: id };
   });
 
-  // Step 2: exchange the code Google redirects back with
-  app.post('/api/calendar/auth/callback', async (request, reply) => {
-    const { code, businessId } = request.body as any;
+  // Step 2: exchange the code Google redirects back with (Google uses GET redirect)
+  app.get('/api/calendar/auth/callback', async (request, reply) => {
+    const { code, state, error } = request.query as any;
+    if (error) { reply.code(400); return { error: `Google OAuth error: ${error}` }; }
     if (!code) { reply.code(400); return { error: 'Missing code' }; }
-    const id = businessId || config.businessId;
+    const id = state || config.businessId;
     const success = await handleAuthCallback(code, id);
     if (success) {
-      return { success: true, message: 'Google Calendar connected successfully', businessId: id };
+      return { success: true, message: 'Google Calendar connected successfully! You can close this tab.', businessId: id };
     }
     reply.code(500);
     return { success: false, error: 'Failed to exchange code — check server logs' };
