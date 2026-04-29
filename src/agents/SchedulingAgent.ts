@@ -2,6 +2,7 @@
 // Handles appointment booking with natural language understanding
 import { getDb, dbGet, dbAll, dbRun, updateJobStatus, createAppointment } from '../database.js';
 import { generateSchedulingResponse, parseTimeSelection } from '../llm.js';
+import { getFreeBusyTimes } from '../../google-calendar.js';
 
 export interface SchedulingData {
   customer_id: number;
@@ -13,6 +14,7 @@ export interface SchedulingData {
   problem_description?: string;
   urgency?: string;
   preferred_time?: string;
+  business_id?: string;
 }
 
 export interface SchedulingResult {
@@ -346,44 +348,57 @@ export class SchedulingAgent {
   }
 
   private async getAvailableSlots(urgency: string): Promise<Array<{ date: string; time: string }>> {
-    const slots: Array<{ date: string; time: string }> = [];
-
-    // Business hours: 8 AM - 5 PM
     const businessHours = ['08:00', '10:00', '12:00', '14:00', '16:00'];
+    const slotDurationMs = 2 * 60 * 60 * 1000; // 2-hour appointment blocks
+    const maxSlots = urgency === 'high' || urgency === 'emergency' ? 3 : 6;
+    const daysToCheck = urgency === 'high' || urgency === 'emergency' ? 2 : 5;
 
-    // Start from tomorrow
     const startDate = new Date();
     startDate.setDate(startDate.getDate() + 1);
 
-    // How many days to check based on urgency
-    const daysToCheck = urgency === 'high' || urgency === 'emergency' ? 2 : 5;
-
+    // Build the full date range to check
+    const dates: string[] = [];
     for (let day = 0; day < daysToCheck; day++) {
-      const checkDate = new Date(startDate);
-      checkDate.setDate(checkDate.getDate() + day);
-      const dateStr = checkDate.toISOString().split('T')[0];
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + day);
+      dates.push(d.toISOString().split('T')[0]);
+    }
 
-      // Check which slots are already booked
-      const bookedSlots = await dbAll(
+    // Fetch Google Calendar busy blocks for the whole range in one API call
+    const businessId = this.data?.business_id;
+    const busyTimes = businessId
+      ? await getFreeBusyTimes(businessId, dates[0], dates[dates.length - 1])
+      : [];
+
+    if (busyTimes.length > 0) {
+      console.log(`[SchedulingAgent] Filtering against ${busyTimes.length} Google Calendar busy blocks`);
+    }
+
+    const slots: Array<{ date: string; time: string }> = [];
+
+    for (const dateStr of dates) {
+      // Local DB: check already-booked appointments
+      const bookedRows = await dbAll(
         `SELECT scheduled_time FROM appointments
          WHERE scheduled_date = ? AND status IN ('confirmed', 'pending')`,
         [dateStr]
       );
+      const bookedTimes = new Set(bookedRows.map((b: any) => b.scheduled_time));
 
-      const bookedTimes = new Set(bookedSlots.map((b: any) => b.scheduled_time));
-
-      // Add available slots
       for (const hour of businessHours) {
-        if (!bookedTimes.has(hour)) {
-          slots.push({
-            date: dateStr,
-            time: hour,
-          });
+        if (bookedTimes.has(hour)) continue;
 
-          if (slots.length >= (urgency === 'high' ? 3 : 6)) {
-            return slots;
-          }
+        // Google Calendar: check for conflicts with this slot window
+        const slotStart = new Date(`${dateStr}T${hour}:00`);
+        const slotEnd = new Date(slotStart.getTime() + slotDurationMs);
+        const calendarConflict = busyTimes.some(b => slotStart < b.end && slotEnd > b.start);
+        if (calendarConflict) {
+          console.log(`[SchedulingAgent] Slot ${dateStr} ${hour} blocked by Google Calendar`);
+          continue;
         }
+
+        slots.push({ date: dateStr, time: hour });
+        if (slots.length >= maxSlots) return slots;
       }
     }
 

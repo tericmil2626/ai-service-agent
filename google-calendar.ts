@@ -315,6 +315,39 @@ export async function listUpcomingEvents(
 }
 
 /**
+ * Get all busy time blocks for a date range using the freebusy API.
+ * Returns an empty array if calendar is not connected (graceful fallback).
+ */
+export async function getFreeBusyTimes(
+  businessId: string,
+  startDate: string, // YYYY-MM-DD
+  endDate: string,   // YYYY-MM-DD
+): Promise<Array<{ start: Date; end: Date }>> {
+  try {
+    const credentials = await getBusinessCredentials(businessId);
+    if (!credentials) return [];
+
+    const auth = await ensureValidToken(credentials);
+    const calendar = google.calendar({ version: 'v3', auth });
+
+    const response = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: new Date(`${startDate}T00:00:00`).toISOString(),
+        timeMax: new Date(`${endDate}T23:59:59`).toISOString(),
+        items: [{ id: credentials.calendarId }],
+      },
+    });
+
+    const busy = response.data.calendars?.[credentials.calendarId]?.busy || [];
+    console.log(`[Google Calendar] ${busy.length} busy blocks found between ${startDate} and ${endDate}`);
+    return busy.map(b => ({ start: new Date(b.start!), end: new Date(b.end!) }));
+  } catch (error) {
+    console.error('[Google Calendar] Failed to get free/busy times:', error);
+    return [];
+  }
+}
+
+/**
  * Check if a time slot is available
  */
 export async function isTimeSlotAvailable(

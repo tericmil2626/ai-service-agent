@@ -208,9 +208,9 @@ export class ServiceBusinessOrchestrator {
       // Transition to scheduling — store intake data for scheduling agent to consume on first call
       state.status = 'scheduling';
       state.currentAgent = 'scheduling';
-      state.context.schedulingData = response.data;
+      state.context.schedulingData = { ...response.data, business_id: this.config.businessId };
       state.context.schedulingState = undefined; // ensure fresh start for scheduling agent
-      console.log('[Orchestrator] Handoff to scheduling. schedulingData set:', JSON.stringify(response.data));
+      console.log('[Orchestrator] Handoff to scheduling. schedulingData set:', JSON.stringify(state.context.schedulingData));
     }
 
     return response;
