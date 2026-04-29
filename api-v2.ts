@@ -11,6 +11,7 @@ import { OrchestratorConfig } from './types/agents';
 import { MissedCallHandler } from './missed-call-handler';
 import { VoiceAgent } from './voice-agent';
 import { getAudioFilePath } from './elevenlabs-tts.js';
+import { getAuthUrl, handleAuthCallback, listUpcomingEvents } from './google-calendar';
 
 // Load configuration from environment or database
 async function loadConfig(): Promise<OrchestratorConfig> {
@@ -660,6 +661,44 @@ async function startServer() {
       voice: process.env.VOICE_TTS_VOICE || 'Polly.Amy',
       format: 'LaML XML with ElevenLabs audio files',
     };
+  });
+
+  // ---- Google Calendar OAuth ----
+
+  // Step 1: get the URL to open in a browser
+  app.get('/api/calendar/auth', async (request) => {
+    const { businessId } = request.query as any;
+    const id = businessId || config.businessId;
+    const url = getAuthUrl(id);
+    return { authUrl: url, businessId: id };
+  });
+
+  // Step 2: exchange the code Google redirects back with
+  app.post('/api/calendar/auth/callback', async (request, reply) => {
+    const { code, businessId } = request.body as any;
+    if (!code) { reply.code(400); return { error: 'Missing code' }; }
+    const id = businessId || config.businessId;
+    const success = await handleAuthCallback(code, id);
+    if (success) {
+      return { success: true, message: 'Google Calendar connected successfully', businessId: id };
+    }
+    reply.code(500);
+    return { success: false, error: 'Failed to exchange code — check server logs' };
+  });
+
+  // Status / test connection
+  app.get('/api/calendar/status', async (request) => {
+    const { businessId } = request.query as any;
+    const id = businessId || config.businessId;
+    const db = await getDb();
+    const row = await db.get(
+      'SELECT created_at, updated_at FROM business_integrations WHERE business_id = ? AND provider = ?',
+      [id, 'google_calendar']
+    );
+    if (!row) return { connected: false, businessId: id };
+    // Try listing events as a live connectivity check
+    const events = await listUpcomingEvents(id, 3);
+    return { connected: true, businessId: id, authorizedAt: row.created_at, upcomingEvents: events.length };
   });
 
   app.get('/health', async () => {
